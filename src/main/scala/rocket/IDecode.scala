@@ -50,8 +50,8 @@ class IntCtrlSigs extends Bundle {
                 //           jal                                                                 renf1             fence.i
                 //   val     | jalr                                                              | renf2           |
                 //   | fp_val| | renx2                                                           | | renf3         |
-                //   | | rocc| | | renx1     s_alu1                          mem_val             | | | wfd         | 
-                //   | | | br| | | | s_alu2  |       imm    dw     alu       | mem_cmd   mem_type| | | | div       | 
+                //   | | rocc| | | renx1     s_alu1                          mem_val             | | | wfd         |
+                //   | | | br| | | | s_alu2  |       imm    dw     alu       | mem_cmd   mem_type| | | | div       |
                 //   | | | | | | | | |       |       |      |      |         | |           |     | | | | | wxd     | fence
                 //   | | | | | | | | |       |       |      |      |         | |           |     | | | | | | csr   | | amo
                 //   | | | | | | | | |       |       |      |      |         | |           |     | | | | | | |     | | | dp
@@ -123,7 +123,9 @@ class IDecode(implicit val p: Parameters) extends DecodeConstants
     CSRRC->     List(Y,N,N,N,N,N,N,Y,A2_ZERO,A1_RS1, IMM_X, DW_XPR,FN_ADD,   N,M_X,        MT_X, N,N,N,N,N,Y,CSR.C,N,N,N,N),
     CSRRWI->    List(Y,N,N,N,N,N,N,N,A2_IMM, A1_ZERO,IMM_Z, DW_XPR,FN_ADD,   N,M_X,        MT_X, N,N,N,N,N,Y,CSR.W,N,N,N,N),
     CSRRSI->    List(Y,N,N,N,N,N,N,N,A2_IMM, A1_ZERO,IMM_Z, DW_XPR,FN_ADD,   N,M_X,        MT_X, N,N,N,N,N,Y,CSR.S,N,N,N,N),
-    CSRRCI->    List(Y,N,N,N,N,N,N,N,A2_IMM, A1_ZERO,IMM_Z, DW_XPR,FN_ADD,   N,M_X,        MT_X, N,N,N,N,N,Y,CSR.C,N,N,N,N))
+    CSRRCI->    List(Y,N,N,N,N,N,N,N,A2_IMM, A1_ZERO,IMM_Z, DW_XPR,FN_ADD,   N,M_X,        MT_X, N,N,N,N,N,Y,CSR.C,N,N,N,N),
+    BITREV->    List(Y,N,N,N,N,N,N,N,A2_X,   A1_RS1, IMM_X, DW_XPR,FN_REV,   N,M_X,        MT_X, N,N,N,N,N,N,CSR.N,N,N,N,N))
+
 }
 
 class SDecode(implicit val p: Parameters) extends DecodeConstants
@@ -301,7 +303,8 @@ class D64Decode(implicit val p: Parameters) extends DecodeConstants
 class RoCCDecode(implicit val p: Parameters) extends DecodeConstants
 {
   val table: Array[(BitPat, List[BitPat])] = Array(
-    CUSTOM0->           List(Y,N,Y,N,N,N,N,N,A2_ZERO,A1_RS1, IMM_X, DW_XPR,FN_ADD,   N,M_X,        MT_X, N,N,N,N,N,N,CSR.N,N,N,N,N),
+    // CUSTOM0->           List(Y,N,Y,N,N,N,N,N,A2_ZERO,A1_RS1, IMM_X, DW_XPR,FN_ADD,   N,M_X,        MT_X, N,N,N,N,N,N,CSR.N,N,N,N,N),
+    // BITREV->            List(Y,N,Y,N,N,N,N,N,A2_X,   A1_RS1, IMM_X, DW_XPR,FN_REV,   N,M_X,        MT_X, N,N,N,N,N,N,CSR.N,N,N,N,N),
     CUSTOM0_RS1->       List(Y,N,Y,N,N,N,N,Y,A2_ZERO,A1_RS1, IMM_X, DW_XPR,FN_ADD,   N,M_X,        MT_X, N,N,N,N,N,N,CSR.N,N,N,N,N),
     CUSTOM0_RS1_RS2->   List(Y,N,Y,N,N,N,Y,Y,A2_ZERO,A1_RS1, IMM_X, DW_XPR,FN_ADD,   N,M_X,        MT_X, N,N,N,N,N,N,CSR.N,N,N,N,N),
     CUSTOM0_RD->        List(Y,N,Y,N,N,N,N,N,A2_ZERO,A1_RS1, IMM_X, DW_XPR,FN_ADD,   N,M_X,        MT_X, N,N,N,N,N,Y,CSR.N,N,N,N,N),

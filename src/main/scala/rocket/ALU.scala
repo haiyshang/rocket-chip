@@ -10,8 +10,8 @@ import Instructions._
 
 object ALU
 {
-  val SZ_ALU_FN = 4
-  def FN_X    = BitPat("b????")
+  val SZ_ALU_FN = 5
+  def FN_X    = BitPat("b?????")
   def FN_ADD  = UInt(0)
   def FN_SL   = UInt(1)
   def FN_SEQ  = UInt(2)
@@ -26,6 +26,7 @@ object ALU
   def FN_SGE  = UInt(13)
   def FN_SLTU = UInt(14)
   def FN_SGEU = UInt(15)
+  def FN_REV  = UInt(16)
 
   def FN_DIV  = FN_XOR
   def FN_DIVU = FN_SR
@@ -43,6 +44,7 @@ object ALU
   def cmpUnsigned(cmd: UInt) = cmd(1)
   def cmpInverted(cmd: UInt) = cmd(0)
   def cmpEq(cmd: UInt) = !cmd(3)
+  def isRev(cmd: UInt) = cmd === FN_REV
 }
 import ALU._
 
@@ -87,8 +89,15 @@ class ALU(implicit p: Parameters) extends CoreModule()(p) {
   // AND, OR, XOR
   val logic = Mux(io.fn === FN_XOR || io.fn === FN_OR, in1_xor_in2, UInt(0)) |
               Mux(io.fn === FN_OR || io.fn === FN_AND, io.in1 & io.in2, UInt(0))
+  def revBit (v: Bits): UInt = Cat(
+    v( 0), v( 1), v( 2), v( 3), v( 4), v( 5), v( 6), v( 7),
+    v( 8), v( 9), v(10), v(11), v(12), v(13), v(14), v(15),
+    v(16), v(17), v(18), v(19), v(20), v(21), v(22), v(23),
+    v(24), v(25), v(26), v(27), v(28), v(29), v(30), v(31))
+  val reverse = revBit (io.in1)
   val shift_logic = (isCmp(io.fn) && io.cmp_out) | logic | shout
-  val out = Mux(io.fn === FN_ADD || io.fn === FN_SUB, io.adder_out, shift_logic)
+  val logic_rev = Mux (isRev (io.fn), reverse, shift_logic)
+  val out = Mux(io.fn === FN_ADD || io.fn === FN_SUB, io.adder_out, logic_rev)
 
   io.out := out
   if (xLen > 32) {
