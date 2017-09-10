@@ -271,7 +271,7 @@ class CharacterCountExampleModule(outer: CharacterCountExample)(implicit p: Para
   with HasL1CacheParameters {
   val cacheParams = tileParams.icache.get
 
-  private val blockOffset = blockOffBits 
+  private val blockOffset = blockOffBits
   private val beatOffset = log2Up(cacheDataBits/8)
 
   val needle = Reg(UInt(width = 8))
@@ -391,4 +391,104 @@ class RoccCommandRouter(opcodes: Seq[OpcodeSet])(implicit p: Parameters)
 
   assert(PopCount(cmdReadys) <= UInt(1),
     "Custom opcode matched for more than one accelerator")
+}
+
+
+class MemTotalExample(implicit p: Parameters) extends LazyRoCC {
+  override lazy val module = new MemTotalExampleModule(this)
+}
+
+class MemTotalExampleModule(outer: MemTotalExample, n: Int = 4)(implicit p: Parameters) extends LazyRoCCModule(outer)
+  with HasCoreParameters {
+  val busy = Reg(init = {Bool(false)})
+
+  val r_recv_max   = Reg(UInt(width = xLen));
+  val r_cmd_count  = Reg(UInt(width = xLen));
+  val r_recv_count = Reg(UInt(width = xLen));
+
+  val r_resp_rd = Reg(io.resp.bits.rd)
+  val r_addr = Reg(UInt(width = xLen))
+  // datapath
+  val r_total = Reg(UInt(width = xLen));
+  val r_tag = Reg(UInt(width = 5))
+
+  val s_idle :: s_mem_acc :: s_finish :: Nil = Enum(Bits(), 3)
+  val r_cmd_state  = Reg(UInt(width = 3), init = s_idle)
+  val r_recv_state = Reg(UInt(width = 3), init = s_idle)
+
+  when (io.cmd.valid) {
+    printf("MemTotalExample: On Going. %x, %x\n", r_cmd_state, r_recv_state)
+  }
+
+
+  when (io.cmd.fire()) {
+    printf("MemTotalExample: Command Received. %x, %x\n", io.cmd.bits.rs1, io.cmd.bits.rs2)
+
+    r_total      := UInt(0)
+    r_addr       := io.cmd.bits.rs1
+    r_recv_max   := io.cmd.bits.rs2
+    r_recv_count := UInt(0)
+    r_cmd_count  := UInt(0)
+    r_tag        := UInt(0)
+
+    r_resp_rd := io.cmd.bits.inst.rd
+
+    r_cmd_state  := s_mem_acc
+    r_recv_state := s_mem_acc
+
+  }
+
+  io.cmd.ready := (r_cmd_state === s_idle)
+  // command resolved if no stalls AND not issuing a load that will need a request
+
+  val cmd_finished = r_cmd_count === r_recv_max
+  when ((r_cmd_state === s_mem_acc) && io.mem.req.fire()) {
+    printf("MemTotalExample: IO.MEM Command Received %x %x\n", io.mem.resp.bits.data, r_cmd_state)
+
+    r_cmd_count  := r_cmd_count + UInt(1)
+    r_tag        := r_tag + UInt(1)
+    r_addr       := r_addr + UInt(8)
+    r_cmd_state  := Mux(cmd_finished, s_idle, s_mem_acc)
+  }
+
+  // MEMORY REQUEST INTERFACE
+  io.mem.req.valid := (r_cmd_state === s_mem_acc)
+  io.mem.req.bits.addr := r_addr
+  io.mem.req.bits.tag := r_tag
+  io.mem.req.bits.cmd := M_XRD // perform a load (M_XWR for stores)
+  io.mem.req.bits.typ := MT_D // D = 8 bytes, W = 4, H = 2, B = 1
+  io.mem.req.bits.data := Bits(0) // we're not performing any stores...
+  io.mem.invalidate_lr := Bool(false)
+
+  val recv_finished = (r_recv_count === r_recv_max)
+  when (r_recv_state === s_mem_acc && io.mem.resp.valid) {
+    printf("MemTotalExample: IO.MEM Received %x %x\n", io.mem.resp.bits.data, r_recv_state)
+
+    r_total      := r_total + io.mem.resp.bits.data
+    r_recv_count := r_recv_count + UInt(1)
+    r_recv_state := Mux(recv_finished, s_finish, s_mem_acc)
+  }
+
+  // control
+  when (io.mem.req.fire()) {
+    busy := Bool(true)
+  }
+
+  when ((r_recv_state === s_finish) && io.resp.fire()) {
+    r_recv_state := s_idle
+    printf("MemTotalExample: Finished. Answer = %x\n", r_total)
+  }
+
+  // PROC RESPONSE INTERFACE
+  io.resp.valid := (r_recv_state === s_finish)
+  // valid response if valid command, need a response, and no stalls
+  io.resp.bits.rd := r_resp_rd
+  // Must respond with the appropriate tag or undefined behavior
+  io.resp.bits.data := r_total
+  // Semantics is to always send out prior accumulator register value
+
+  io.busy := io.cmd.valid || busy
+  // Be busy when have pending memory requests or committed possibility of pending requests
+  io.interrupt := Bool(false)
+  // Set this true to trigger an interrupt on the processor (please refer to supervisor documentation)
 }

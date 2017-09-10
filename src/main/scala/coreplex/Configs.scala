@@ -202,7 +202,7 @@ class WithRoccExample extends Config((site, here, up) => {
           nPTWPorts = 1),
         RoCCParams(
           opcodes = OpcodeSet.custom2,
-          generator = (p: Parameters) => LazyModule(new CharacterCountExample()(p)))
+          generator = (p: Parameters) => LazyModule(new MemTotalExample()(p)))
         ))
     }
 })
@@ -257,7 +257,7 @@ class WithRationalRocketTiles extends Config((site, here, up) => {
 class WithEdgeDataBits(dataBits: Int) extends Config((site, here, up) => {
   case MemoryBusParams => up(MemoryBusParams, site).copy(beatBytes = dataBits/8)
   case ExtIn => up(ExtIn, site).copy(beatBytes = dataBits/8)
-  
+
 })
 
 class WithJtagDTM extends Config ((site, here, up) => {
