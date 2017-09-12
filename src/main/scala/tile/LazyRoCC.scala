@@ -410,7 +410,7 @@ class MemTotalExampleModule(outer: MemTotalExample, n: Int = 4)(implicit p: Para
   val r_addr = Reg(UInt(width = xLen))
   // datapath
   val r_total = Reg(UInt(width = xLen));
-  val r_tag = Reg(UInt(width = 5))
+  val r_tag = Reg(UInt(width = n))
 
   val s_idle :: s_mem_acc :: s_finish :: Nil = Enum(Bits(), 3)
   val r_cmd_state  = Reg(UInt(width = 3), init = s_idle)
@@ -458,6 +458,7 @@ class MemTotalExampleModule(outer: MemTotalExample, n: Int = 4)(implicit p: Para
   io.mem.req.bits.cmd := M_XRD // perform a load (M_XWR for stores)
   io.mem.req.bits.typ := MT_D // D = 8 bytes, W = 4, H = 2, B = 1
   io.mem.req.bits.data := Bits(0) // we're not performing any stores...
+  io.mem.req.bits.phys := Bool(false)
   io.mem.invalidate_lr := Bool(false)
 
   val recv_finished = (r_recv_count === r_recv_max)
@@ -487,7 +488,7 @@ class MemTotalExampleModule(outer: MemTotalExample, n: Int = 4)(implicit p: Para
   io.resp.bits.data := r_total
   // Semantics is to always send out prior accumulator register value
 
-  io.busy := io.cmd.valid || busy
+  io.busy := io.cmd.valid
   // Be busy when have pending memory requests or committed possibility of pending requests
   io.interrupt := Bool(false)
   // Set this true to trigger an interrupt on the processor (please refer to supervisor documentation)
