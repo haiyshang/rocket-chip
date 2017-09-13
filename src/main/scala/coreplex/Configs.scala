@@ -202,7 +202,7 @@ class WithRoccExample extends Config((site, here, up) => {
           nPTWPorts = 1),
         RoCCParams(
           opcodes = OpcodeSet.custom2,
-          generator = (p: Parameters) => LazyModule(new MemTotalExample()(p)))
+          generator = (p: Parameters) => LazyModule(new MatrixMul()(p)))
         ))
     }
 })
