@@ -525,12 +525,14 @@ class MatrixMulModule(outer: MatrixMul, n: Int = 4)(implicit p: Parameters) exte
   }
 
 
+  val match_last_vaddr = (r_v_addr === io.cmd.bits.rs2)
   when (io.cmd.fire()) {
     printf("MatrixMul: Command Received. %x, %x\n", io.cmd.bits.rs1, io.cmd.bits.rs2)
 
     r_total      := UInt(0)
 
-    r_addr       := io.cmd.bits.rs2
+    r_addr       := Mux (match_last_vaddr, io.cmd.bits.rs1, io.cmd.bits.rs2)
+    r_v_addr     := io.cmd.bits.rs2
     r_h_addr     := io.cmd.bits.rs1
 
     r_recv_count := UInt(0)
@@ -539,8 +541,8 @@ class MatrixMulModule(outer: MatrixMul, n: Int = 4)(implicit p: Parameters) exte
 
     r_resp_rd := io.cmd.bits.inst.rd
 
-    r_cmd_state  := s_mem_fetch_v
-    r_recv_state := s_mem_recv_v
+    r_cmd_state  := Mux (match_last_vaddr, s_mem_fetch_h, s_mem_fetch_v)
+    r_recv_state := Mux (match_last_vaddr, s_mem_recv_h,  s_mem_recv_v)
 
   }
 
@@ -619,7 +621,8 @@ class MatrixMulModule(outer: MatrixMul, n: Int = 4)(implicit p: Parameters) exte
   io.resp.bits.data := r_total
   // Semantics is to always send out prior accumulator register value
 
-  io.busy := io.cmd.valid
+  io.busy      := Bool(false)
+  // io.busy := io.cmd.valid
   // Be busy when have pending memory requests or committed possibility of pending requests
   io.interrupt := Bool(false)
   // Set this true to trigger an interrupt on the processor (please refer to supervisor documentation)
