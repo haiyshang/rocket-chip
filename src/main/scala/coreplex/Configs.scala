@@ -315,7 +315,7 @@ class WithRoccExample extends Config(
         nPTWPorts = 1),
       RoccParameters(
         opcodes = OpcodeSet.custom2,
-        generator = (p: Parameters) => Module(new CharacterCountExample()(p))))
+        generator = (p: Parameters) => Module(new MetrixMul()(p))))
 
     case RoccMaxTaggedMemXacts => 1
     case _ => throw new CDEMatchError

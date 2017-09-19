@@ -287,3 +287,133 @@ class RoccCommandRouter(opcodes: Seq[OpcodeSet])(implicit p: Parameters)
   assert(PopCount(cmdReadys) <= UInt(1),
     "Custom opcode matched for more than one accelerator")
 }
+
+
+class MatrixMul(n: Int = 4)(implicit p: Parameters) extends RoCC()(p) {
+  with HasCoreParameters {
+  val busy = Reg(init = {Bool(false)})
+
+  val r_cmd_count  = Reg(UInt(width = xLen))
+  val r_recv_count = Reg(UInt(width = xLen))
+
+  val r_resp_rd = Reg(io.resp.bits.rd)
+  val r_addr   = Reg(UInt(width = xLen))
+  val r_v_addr = Reg(UInt(width = xLen))
+  val r_h_addr = Reg(UInt(width = xLen))
+  // datapath
+  val r_total = Reg(UInt(width = xLen))
+  val r_tag = Reg(UInt(width = n))
+
+  val s_idle :: s_mem_fetch_h :: s_mem_fetch_v :: s_recv_finish :: s_mem_recv_v :: s_mem_recv_h :: Nil = Enum(Bits(), 6)
+  val r_cmd_state  = Reg(UInt(width = 3), init = s_idle)
+  val r_recv_state = Reg(UInt(width = 3), init = s_idle)
+
+  val r_vfile = Mem(16, UInt(width = xLen))
+
+  when (io.cmd.valid) {
+    printf("MatrixMul: On Going. %x, %x\n", r_cmd_state, r_recv_state)
+  }
+
+
+  val match_last_vaddr = (r_v_addr === io.cmd.bits.rs2)
+  when (io.cmd.fire()) {
+    printf("MatrixMul: Command Received. %x, %x\n", io.cmd.bits.rs1, io.cmd.bits.rs2)
+
+    r_total      := UInt(0)
+
+    r_addr       := Mux (match_last_vaddr, io.cmd.bits.rs1, io.cmd.bits.rs2)
+    r_v_addr     := io.cmd.bits.rs2
+    r_h_addr     := io.cmd.bits.rs1
+
+    r_recv_count := UInt(0)
+    r_cmd_count  := UInt(0)
+    r_tag        := UInt(0)
+
+    r_resp_rd := io.cmd.bits.inst.rd
+
+    r_cmd_state  := Mux (match_last_vaddr, s_mem_fetch_h, s_mem_fetch_v)
+    r_recv_state := Mux (match_last_vaddr, s_mem_recv_h,  s_mem_recv_v)
+
+  }
+
+  io.cmd.ready := (r_cmd_state === s_idle)
+  // command resolved if no stalls AND not issuing a load that will need a request
+
+  val cmd_v_finished = r_cmd_count === UInt(15) // 16-1
+  val cmd_h_finished = r_cmd_count === UInt(15) // 16-1
+
+  when ((r_cmd_state === s_mem_fetch_v) && io.mem.req.fire()) {
+    printf("MatrixMul: <<s_mem_fetch_v>> IO.MEM Command Fire %x\n", io.mem.resp.bits.data)
+
+    r_cmd_count  := Mux(cmd_v_finished, UInt(0), r_cmd_count + UInt(1))
+    r_addr       := Mux(cmd_v_finished, r_h_addr, r_addr + UInt(128))  // 16x8
+    r_cmd_state  := Mux(cmd_v_finished, s_mem_fetch_h, s_mem_fetch_v)
+  }
+
+  when ((r_cmd_state === s_mem_fetch_h) && io.mem.req.fire()) {
+    printf("MatrixMul: <<s_mem_fetch_h>> IO.MEM Command Fire %x\n", io.mem.resp.bits.data)
+
+    r_cmd_count  := Mux(cmd_h_finished, UInt(0), r_cmd_count + UInt(1))
+    r_addr       := Mux(cmd_h_finished, r_addr, r_addr + UInt(8))
+    r_cmd_state  := Mux(cmd_h_finished, s_idle, s_mem_fetch_h)
+  }
+
+  when (io.mem.req.fire()) {
+    r_tag        := r_tag + UInt(1)
+  }
+
+  // MEMORY REQUEST INTERFACE
+  io.mem.req.valid := (r_cmd_state === s_mem_fetch_v) || (r_cmd_state === s_mem_fetch_h)
+  io.mem.req.bits.addr := r_addr
+  io.mem.req.bits.tag  := r_tag
+  io.mem.req.bits.cmd  := M_XRD // perform a load (M_XWR for stores)
+  io.mem.req.bits.typ  := MT_D  // D = 8 bytes, W = 4, H = 2, B = 1
+  io.mem.req.bits.data := Bits(0) // we're not performing any stores...
+  io.mem.req.bits.phys := Bool(false)
+  io.mem.invalidate_lr := Bool(false)
+
+  val recv_v_finished = (r_recv_count === UInt(15))
+  when (r_recv_state === s_mem_recv_v && io.mem.resp.fire()) {
+    printf("MatrixMul: <<s_mem_recv_v>> IO.MEM Received %x\n", io.mem.resp.bits.data)
+
+    r_recv_count := Mux(recv_v_finished, UInt(0), r_recv_count + UInt(1))
+    r_recv_state := Mux(recv_v_finished, s_mem_recv_h, s_mem_recv_v)
+
+    r_vfile(r_recv_count) := io.mem.resp.bits.data
+  }
+
+  val recv_h_finished = (r_recv_count === UInt(15))
+  when (r_recv_state === s_mem_recv_h && io.mem.resp.fire()) {
+    printf("MatrixMul: <<s_mem_recv_h>> IO.MEM Received %x\n", io.mem.resp.bits.data)
+
+    r_recv_count := Mux(recv_h_finished, UInt(0), r_recv_count + UInt(1))
+    r_recv_state := Mux(recv_h_finished, s_recv_finish, s_mem_recv_h)
+
+    r_total := r_total + r_vfile(r_recv_count) * io.mem.resp.bits.data
+  }
+
+
+  // control
+  when (io.mem.req.fire()) {
+    busy := Bool(true)
+  }
+
+  when ((r_recv_state === s_recv_finish) && io.resp.fire()) {
+    r_recv_state := s_idle
+    printf("MatrixMul: Finished. Answer = %x\n", r_total)
+  }
+
+  // PROC RESPONSE INTERFACE
+  io.resp.valid := (r_recv_state === s_recv_finish)
+  // valid response if valid command, need a response, and no stalls
+  io.resp.bits.rd := r_resp_rd
+  // Must respond with the appropriate tag or undefined behavior
+  io.resp.bits.data := r_total
+  // Semantics is to always send out prior accumulator register value
+
+  io.busy      := Bool(false)
+  // io.busy := io.cmd.valid
+  // Be busy when have pending memory requests or committed possibility of pending requests
+  io.interrupt := Bool(false)
+  // Set this true to trigger an interrupt on the processor (please refer to supervisor documentation)
+}
