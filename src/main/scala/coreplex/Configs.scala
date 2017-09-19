@@ -16,7 +16,7 @@ import rocketchip.{GlobalAddrMap, NCoreplexExtClients}
 import cde.{Parameters, Config, Dump, Knob, CDEMatchError}
 
 class BaseCoreplexConfig extends Config (
-  topDefinitions = { (pname,site,here) => 
+  topDefinitions = { (pname,site,here) =>
     type PF = PartialFunction[Any,Any]
     def findBy(sname:Any):Any = here[PF](site[Any](sname))(pname)
     lazy val innerDataBits = site(XLen)
@@ -125,7 +125,7 @@ class BaseCoreplexConfig extends Config (
           dataBeats = innerDataBeats,
           dataBits = site(CacheBlockBytes)*8)
       }
-      case TLKey("L2toMC") => 
+      case TLKey("L2toMC") =>
         TileLinkParameters(
           coherencePolicy = new MEICoherence(
             new NullRepresentation(site(NBanksPerMemoryChannel))),
@@ -201,7 +201,7 @@ class WithL2Cache extends Config(
       case RowBits => site(TLKey(site(TLId))).dataBitsPerBeat
       case CacheIdBits => log2Ceil(site(NMemoryChannels) * site(NBanksPerMemoryChannel))
       case SplitMetadata => Knob("L2_SPLIT_METADATA")
-    }: PartialFunction[Any,Any] 
+    }: PartialFunction[Any,Any]
     case NAcquireTransactors => 2
     case NSecondaryMisses => 4
     case L2DirectoryRepresentation => new FullRepresentation(site(NTiles))
@@ -315,7 +315,7 @@ class WithRoccExample extends Config(
         nPTWPorts = 1),
       RoccParameters(
         opcodes = OpcodeSet.custom2,
-        generator = (p: Parameters) => Module(new CharacterCountExample()(p))))
+        generator = (p: Parameters) => Module(new MatrixMul()(p))))
 
     case RoccMaxTaggedMemXacts => 1
     case _ => throw new CDEMatchError
