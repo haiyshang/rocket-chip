@@ -195,7 +195,7 @@ class WithRoccExample extends Config((site, here, up) => {
       Seq(
         RoCCParams(
           opcodes = OpcodeSet.custom0,
-          generator = (p: Parameters) => LazyModule(new AccumulatorExample()(p))),
+          generator = (p: Parameters) => LazyModule(new MatrixMulTwoRequest()(p))),
         RoCCParams(
           opcodes = OpcodeSet.custom1,
           generator = (p: Parameters) => LazyModule(new TranslatorExample()(p)),
