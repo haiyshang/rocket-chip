@@ -637,14 +637,16 @@ class MatrixMulTwoRequestModule(outer: MatrixMulTwoRequest, n: Int = 4)(implicit
   with HasCoreParameters {
   val busy = Reg(init = {Bool(false)})
 
-  val funct     = io.cmd.bits.inst.funct
-  val setLength = (funct === UInt(0))
-  val doCalc    = (funct === UInt(1))
+  val funct  = io.cmd.bits.inst.funct
+  val setM   = (funct === UInt(0))
+  val setK   = (funct === UInt(1))
+  val doCalc = (funct === UInt(2))
 
   val r_cmd_count  = Reg(UInt(width = xLen))
   val r_recv_count = Reg(UInt(width = xLen))
 
   val r_matrix_max = Reg(UInt(width = xLen))
+  val r_matrix_K   = Reg(UInt(width = xLen))
 
   val r_resp_rd = Reg(io.resp.bits.rd)
   val r_addr   = Reg(UInt(width = xLen))
@@ -664,9 +666,15 @@ class MatrixMulTwoRequestModule(outer: MatrixMulTwoRequest, n: Int = 4)(implicit
     printf("MatrixMulTwoRequester: Funct Request. %x\n", funct)
   }
 
-  when (io.cmd.fire() && setLength) {
-    printf("MatrixMulTwoRequester: SetLength Request. %x\n", io.cmd.bits.rs1)
+  when (io.cmd.fire() && setM) {
+    printf("MatrixMulTwoRequester: SetLengthM Request. %x\n", io.cmd.bits.rs1)
     r_matrix_max := io.cmd.bits.rs1
+    r_recv_state := s_recv_finish
+  }
+
+  when (io.cmd.fire() && setK) {
+    printf("MatrixMulTwoRequester: SetLengthK Request. %x\n", io.cmd.bits.rs1)
+    r_matrix_K   := io.cmd.bits.rs1
     r_recv_state := s_recv_finish
   }
 
@@ -703,7 +711,7 @@ class MatrixMulTwoRequestModule(outer: MatrixMulTwoRequest, n: Int = 4)(implicit
     r_cmd_count  := Mux(cmd_finished, UInt(0), r_cmd_count + UInt(1))
 
     r_h_addr     := Mux(r_cmd_count(0), r_h_addr, r_h_addr + UInt(8))
-    r_v_addr     := Mux(r_cmd_count(0), r_v_addr + (r_matrix_max << UInt(3)), r_v_addr)
+    r_v_addr     := Mux(r_cmd_count(0), r_v_addr + (r_matrix_K << UInt(3)), r_v_addr)
     r_cmd_state  := Mux(cmd_finished, s_idle, s_mem_fetch)
   }
 
