@@ -308,7 +308,8 @@ class WithRoccExample extends Config(
     case BuildRoCC => Seq(
       RoccParameters(
         opcodes = OpcodeSet.custom0,
-        generator = (p: Parameters) => Module(new AccumulatorExample()(p))),
+        generator = (p: Parameters) => Module(new MatrixMulTwoRequester()(p))),
+        // generator = (p: Parameters) => Module(new AccumulatorExample()(p))),
       RoccParameters(
         opcodes = OpcodeSet.custom1,
         generator = (p: Parameters) => Module(new TranslatorExample()(p)),
