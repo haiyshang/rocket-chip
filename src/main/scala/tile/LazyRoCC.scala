@@ -785,6 +785,9 @@ class MatrixMul32Module(outer: MatrixMul32, n: Int = 4)(implicit p: Parameters) 
   val r_cmd_count  = Reg(UInt(width = xLen))
   val r_recv_count = Reg(UInt(width = xLen))
 
+  val r_cmd_count_3  = Reg(UInt(width = 2))
+  val r_recv_count_3 = Reg(UInt(width = 2))
+
   val r_matrix_max = Reg(UInt(width = xLen))
   val r_matrix_K   = Reg(UInt(width = xLen))
 
@@ -794,8 +797,11 @@ class MatrixMul32Module(outer: MatrixMul32, n: Int = 4)(implicit p: Parameters) 
   val r_h_addr = Reg(UInt(width = xLen))
 
   // datapath
-  val r_total = Reg(UInt(width = xLen))
-  val r_h_val = Reg(UInt(width = xLen))
+  val r_total_0 = Reg(SInt(width = 32))
+  val r_total_1 = Reg(SInt(width = 32))
+  val r_h_val_0 = Reg(SInt(width = 32))
+  val r_h_val_1 = Reg(SInt(width = 32))
+
   val r_tag   = Reg(UInt(width = n))
 
   val s_idle :: s_mem_fetch :: s_recv_finish :: s_mem_recv :: Nil = Enum(Bits(), 4)
@@ -819,39 +825,45 @@ class MatrixMul32Module(outer: MatrixMul32, n: Int = 4)(implicit p: Parameters) 
   }
 
   when (io.cmd.fire()) {
-    r_total      := UInt(0)
+    r_total_0 := SInt(0)
+    r_total_1 := SInt(0)
     r_resp_rd := io.cmd.bits.inst.rd
   }
 
   when (io.cmd.fire() && doCalc) {
     printf("MatrixMul32: DoCalc Received. %x, %x\n", io.cmd.bits.rs1, io.cmd.bits.rs2)
 
-    r_v_addr := Cat(io.cmd.bits.rs2(63, 3), UInt(0, width=3))
     r_h_addr := Cat(io.cmd.bits.rs1(63, 3), UInt(0, width=3))
+    r_v_addr := Cat(io.cmd.bits.rs2(63, 3), UInt(0, width=3))
 
-    r_recv_count := UInt(0)
-    r_cmd_count  := UInt(0)
-    r_tag        := UInt(0)
+    r_recv_count   := UInt(0)
+    r_recv_count_3 := UInt(0)
+    r_cmd_count    := UInt(0)
+    r_cmd_count_3  := UInt(0)
+    r_tag          := UInt(0)
 
     r_cmd_state  := s_mem_fetch
     r_recv_state := s_mem_recv
   }
 
-  val w_addr = Mux (r_cmd_count(0) === UInt(0), r_h_addr, r_v_addr)
+  val w_addr = Mux (r_cmd_count_3 === UInt(0), r_h_addr, r_v_addr)
 
   io.cmd.ready := (r_cmd_state === s_idle) && (r_recv_state === s_idle)
   // command resolved if no stalls AND not issuing a load that will need a request
 
-  val cmd_request_max = r_matrix_max + UInt(1)
+  val cmd_request_max = (r_matrix_max(xLen-1,1)) + r_matrix_max  // x3
 
   val cmd_finished = (r_cmd_count === cmd_request_max)
   when ((r_cmd_state === s_mem_fetch) && io.mem.req.fire()) {
     printf("MatrixMul32: <<s_mem_fetch_v>> IO.MEM Command Fire %x\n", w_addr)
 
-    r_cmd_count  := Mux(cmd_finished, UInt(0), r_cmd_count + UInt(1))
+    r_cmd_count  := Mux(cmd_finished,              UInt(0), r_cmd_count + UInt(1))
+    r_cmd_count_3:= Mux(r_cmd_count_3 === UInt(2), UInt(0), r_cmd_count_3 + UInt(1))
 
-    r_h_addr     := Mux(r_cmd_count(0), r_h_addr, r_h_addr + UInt(8))
-    r_v_addr     := Mux(r_cmd_count(0), r_v_addr + (r_matrix_K << UInt(3)), r_v_addr)
+    r_h_addr     := Mux(r_cmd_count_3 === UInt(0), r_h_addr + UInt(8), r_h_addr)
+    r_v_addr     := Mux(r_cmd_count_3 === UInt(1) || r_cmd_count_3 === UInt(2),
+                        r_v_addr + (r_matrix_K << UInt(2)),
+                        r_v_addr)
     r_cmd_state  := Mux(cmd_finished, s_idle, s_mem_fetch)
   }
 
@@ -871,21 +883,48 @@ class MatrixMul32Module(outer: MatrixMul32, n: Int = 4)(implicit p: Parameters) 
 
   val recv_finished = (r_recv_count === cmd_request_max)
 
-  val w_total = r_total + r_h_val(63,32) * io.mem.resp.bits.data(63,32) +
-                          r_h_val(31, 0) * io.mem.resp.bits.data(31, 0)
+  def SignExtend32(x: UInt) = {
+    (Cat(Fill(32,x(31)), x)).asSInt
+  }
+
+  val w_resp_data_0 = Wire (SInt(width = 32))
+  val w_resp_data_1 = Wire (SInt(width = 32))
+  w_resp_data_0 := SignExtend32 (io.mem.resp.bits.data(31, 0))
+  w_resp_data_1 := SignExtend32 (io.mem.resp.bits.data(63,32))
+
+  val w_total_0 = Wire(SInt(width = 32))
+  val w_total_1 = Wire(SInt(width = 32))
+  w_total_0 := r_total_0 + Mux(r_recv_count_3 === UInt(1), r_h_val_0.asSInt * w_resp_data_0.asSInt,
+                           Mux(r_recv_count_3 === UInt(2), r_h_val_1.asSInt * w_resp_data_0.asSInt,
+                           r_total_0))
+  w_total_1 := r_total_1 + Mux(r_recv_count_3 === UInt(1), r_h_val_0.asSInt * w_resp_data_1.asSInt,
+                           Mux(r_recv_count_3 === UInt(2), r_h_val_1.asSInt * w_resp_data_1.asSInt,
+                           r_total_1))
+
+  when (r_recv_state === s_mem_recv && io.mem.resp.fire() && (r_recv_count_3 === UInt(1))) {
+    printf("MatrixMul32: <<s_mem_recv_v>> r_total update %x + %x * %x = %x\n",
+      r_total_0, r_h_val_0, w_resp_data_0, w_total_0);
+  }
+  when (r_recv_state === s_mem_recv && io.mem.resp.fire() && (r_recv_count_3 === UInt(2))) {
+    printf("MatrixMul32: <<s_mem_recv_v>> r_total update %x + %x * %x = %x\n",
+      r_total_0, r_h_val_1, w_resp_data_0, w_total_0);
+  }
 
   when (r_recv_state === s_mem_recv && io.mem.resp.fire()) {
-    printf("MatrixMul32: <<s_mem_recv_v>> IO.MEM Received %x (r_count=%d)\n", io.mem.resp.bits.data, r_recv_count)
+    printf("MatrixMul32: <<s_mem_recv_v>> IO.MEM Received %x,%x (r_recv_count_3=%d)\n",
+      SignExtend32 (io.mem.resp.bits.data(31, 0)), SignExtend32 (io.mem.resp.bits.data(63,32)),
+      r_recv_count_3)
 
-    r_recv_count := Mux(recv_finished, UInt(0), r_recv_count + UInt(1))
+    r_recv_count   := Mux(recv_finished, UInt(0), r_recv_count + UInt(1))
+    r_recv_count_3 := Mux(r_recv_count_3 === UInt(2), UInt(0), r_recv_count_3 + UInt(1))
+
     r_recv_state := Mux(recv_finished, s_recv_finish, s_mem_recv)
 
-    r_h_val      := Mux(r_recv_count(0), r_h_val, io.mem.resp.bits.data)
+    r_h_val_0    := Mux(r_recv_count_3 === UInt(0), SignExtend32 (io.mem.resp.bits.data(31, 0)), r_h_val_0)
+    r_h_val_1    := Mux(r_recv_count_3 === UInt(0), SignExtend32 (io.mem.resp.bits.data(63,32)), r_h_val_1)
 
-    r_total      := Mux(r_recv_count(0), w_total, r_total)
-    when (r_recv_count(0)) {
-      printf("MatrixMul32: <<s_mem_recv_v>> r_total update %x\n", r_total)
-    }
+    r_total_0 := Mux(r_recv_count_3 === UInt(1) || r_recv_count_3 === UInt(2), w_total_0, r_total_0)
+    r_total_1 := Mux(r_recv_count_3 === UInt(1) || r_recv_count_3 === UInt(2), w_total_1, r_total_1)
   }
 
   // control
@@ -895,7 +934,7 @@ class MatrixMul32Module(outer: MatrixMul32, n: Int = 4)(implicit p: Parameters) 
 
   when ((r_recv_state === s_recv_finish) && io.resp.fire()) {
     r_recv_state := s_idle
-    printf("MatrixMul32: Finished. Answer = %x\n", r_total)
+    printf("MatrixMul32: Finished. Answer = %d, %d\n", r_total_1, r_total_0)
   }
 
   // PROC RESPONSE INTERFACE
@@ -903,7 +942,7 @@ class MatrixMul32Module(outer: MatrixMul32, n: Int = 4)(implicit p: Parameters) 
   // valid response if valid command, need a response, and no stalls
   io.resp.bits.rd := r_resp_rd
   // Must respond with the appropriate tag or undefined behavior
-  io.resp.bits.data := r_total
+  io.resp.bits.data := Cat (r_total_1, r_total_0)
   // Semantics is to always send out prior accumulator register value
 
   io.busy := Bool(false)
