@@ -45,9 +45,9 @@ trait HasPeripheryDebugBundle {
     tckHalfPeriod: Int = 2,
     cmdDelay: Int = 2,
     psd: PSDTestMode = new PSDTestMode().fromBits(0.U)): Unit =  {
-    debug.clockeddmi.foreach { d =>
-      val dtm = Module(new SimDTM).connect(c, r, d, out)
-    }
+    // debug.clockeddmi.foreach { d =>
+    //   val dtm = Module(new SimDTM).connect(c, r, d, out)
+    // }
     debug.systemjtag.foreach { sj =>
       val jtag = Module(new JTAGVPI(tckHalfPeriod = tckHalfPeriod, cmdDelay = cmdDelay)).connect(sj.jtag, sj.reset, r, out)
       sj.mfr_id := p(JtagDTMKey).idcodeManufId.U(11.W)

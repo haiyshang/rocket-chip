@@ -25,7 +25,7 @@ class BaseCoreplexConfig extends Config ((site, here, up) => {
   case MemoryBusKey => MemoryBusParams(beatBytes = site(XLen)/8, blockBytes = site(CacheBlockBytes))
   // Additional device Parameters
   case ErrorParams => ErrorParams(Seq(AddressSet(0x3000, 0xfff)), maxAtomic=site(XLen)/8, maxTransfer=4096)
-  case BootROMParams => BootROMParams(contentFileName = "./bootrom/bootrom.img")
+  // case BootROMParams => BootROMParams(contentFileName = "./bootrom/bootrom.img")
   case DebugModuleParams => DefaultDebugModuleParams(site(XLen))
 })
 
@@ -263,7 +263,7 @@ class WithRationalRocketTiles extends Config((site, here, up) => {
 class WithEdgeDataBits(dataBits: Int) extends Config((site, here, up) => {
   case MemoryBusKey => up(MemoryBusKey, site).copy(beatBytes = dataBits/8)
   case ExtIn => up(ExtIn, site).copy(beatBytes = dataBits/8)
-  
+
 })
 
 class WithJtagDTM extends Config ((site, here, up) => {

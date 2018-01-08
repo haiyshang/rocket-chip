@@ -65,7 +65,7 @@ trait HasRocketTiles extends HasTiles
     with HasPeripheryPLIC
     with HasPeripheryClint
     with HasPeripheryDebug {
-  val module: HasRocketTilesModuleImp
+  // val module: HasRocketTilesModuleImp
 
   protected val rocketTileParams = p(RocketTilesKey)
   private val NumRocketTiles = rocketTileParams.size
@@ -150,7 +150,7 @@ trait HasRocketTiles extends HasTiles
     periphIntNode := plic.intnode                    // meip
     if (tp.core.useVM) periphIntNode := plic.intnode // seip
 
-    // 3. local interrupts  never cross 
+    // 3. local interrupts  never cross
     // this.intInwardNode is wired up externally     // lip
 
     // 4. conditional crossing from core to PLIC

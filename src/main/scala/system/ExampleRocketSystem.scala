@@ -14,7 +14,7 @@ class ExampleRocketSystem(implicit p: Parameters) extends RocketCoreplex
     with HasMasterAXI4MemPort
     with HasMasterAXI4MMIOPort
     with HasSlaveAXI4Port
-    with HasPeripheryBootROM
+    // with HasPeripheryBootROM
     with HasSystemErrorSlave {
   override lazy val module = new ExampleRocketSystemModule(this)
 }
@@ -25,5 +25,5 @@ class ExampleRocketSystemModule[+L <: ExampleRocketSystem](_outer: L) extends Ro
     with HasMasterAXI4MemPortModuleImp
     with HasMasterAXI4MMIOPortModuleImp
     with HasSlaveAXI4PortModuleImp
-    with HasPeripheryBootROMModuleImp
+    // with HasPeripheryBootROMModuleImp
     with DontTouch
