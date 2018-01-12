@@ -39,6 +39,9 @@ $(output_dir)/%.vcd: $(output_dir)/% $(simv_debug)
 $(output_dir)/%.vpd: $(output_dir)/% $(simv_debug)
 	cd $(sim_dir) && $(exec_simv_debug) +verbose +vcdplusfile=$@ +max-cycles=$(timeout_cycles) $< $(disasm) $(patsubst %.vpd,%.out,$@) && [ $$PIPESTATUS -eq 0 ]
 
+$(output_dir)/%.fsdb: $(output_dir)/% $(simv_debug)
+	cd $(sim_dir) && $(exec_simv_debug) +verbose +max-cycles=$(timeout_cycles) $< $(disasm) $(patsubst %.fsdb,%.out,$@) && [ $$PIPESTATUS -eq 0 ]
+
 $(output_dir)/%.saif: $(output_dir)/% $(simv_debug)
 	cd $(sim_dir) && rm -f $(output_dir)/pipe-$*.vcd && vcd2saif -input $(output_dir)/pipe-$*.vcd -pipe "$(exec_simv_debug) +verbose +vcdfile=$(output_dir)/pipe-$*.vcd +max-cycles=$(bmark_timeout_cycles) $<" -output $@ > $(patsubst %.saif,%.out,$@) 2>&1
 
