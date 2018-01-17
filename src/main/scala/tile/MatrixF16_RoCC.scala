@@ -1,3 +1,14 @@
+package freechips.rocketchip.tile
+
+import Chisel._
+
+import freechips.rocketchip.config._
+import freechips.rocketchip.coreplex._
+import freechips.rocketchip.diplomacy._
+import freechips.rocketchip.rocket._
+import freechips.rocketchip.tilelink._
+import freechips.rocketchip.util.InOrderArbiter
+
 class DotProductF16(implicit p: Parameters) extends LazyRoCC {
   override lazy val module = new DotProductF16Module(this)
 }
@@ -15,7 +26,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val r_recv_count = Reg(UInt(width = xLen))
 
   val r_matrix_max = Reg(UInt(width = xLen))
-  val r_matrix_K   = Reg(UInt(width = xLen))
+  val r_v_step     = Reg(UInt(width = xLen))
 
   val r_resp_rd = Reg(io.resp.bits.rd)
   val r_addr   = Reg(UInt(width = xLen))
@@ -23,9 +34,11 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val r_h_addr = Reg(UInt(width = xLen))
 
   // datapath
-  val r_total = Reg(UInt(width = xLen))
+  val r_total = Reg(SInt(width = xLen))
   val r_h_val = Reg(UInt(width = xLen))
   val r_tag   = Reg(UInt(width = n))
+
+  val w_result = Wire(SInt(width=32))
 
   val s_idle :: s_mem_fetch :: s_recv_finish :: s_mem_recv :: Nil = Enum(Bits(), 4)
   val r_cmd_state  = Reg(UInt(width = 3), init = s_idle)
@@ -44,7 +57,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   }
 
   when (io.cmd.fire()) {
-    r_total   := UInt(0)
+    r_total   := SInt(0)
     r_resp_rd := io.cmd.bits.inst.rd
   }
 
@@ -103,16 +116,60 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
 
     r_h_val      := Mux(r_recv_count(0), r_h_val, io.mem.resp.bits.data)
 
-    r_total      := Mux(r_recv_count(0), r_total + r_h_val * io.mem.resp.bits.data, r_total)
+    r_total      := Mux(r_recv_count(0), r_total + w_result, r_total)
     when (r_recv_count(0)) {
       printf("DotProductF16: <<s_mem_recv_v>> r_total update %x\n", r_total)
     }
   }
 
-  val r_a_val = r_h_val;
-  val r_b_val = io.mem.resp.bits.data;
+  val w_a_val = r_h_val;
+  val w_b_val = io.mem.resp.bits.data;
 
+  val w_a_hi = Wire(SInt(width=32))
+  val w_b_hi = Wire(SInt(width=32))
+  val w_a_lo = Wire(UInt(width=32))
+  val w_b_lo = Wire(UInt(width=32))
 
+  // int32_t  A = (a_val >> 16),    C = (b_val >> 16);
+  // uint32_t B = (a_val & 0xFFFF), D = (b_val & 0xFFFF);
+  w_a_hi := Cat(Fill(16, w_a_val(31)), w_a_val(31,16))
+  w_b_hi := Cat(Fill(16, w_b_val(31)), w_b_val(31,16))
+  w_a_lo := Cat(UInt(0, 16), w_a_val(15, 0))
+  w_b_lo := Cat(UInt(0, 16), w_b_val(15, 0))
+
+  val w_ah_bh       = Wire(SInt(width=32))
+  val w_ah_bl_al_bh = Wire(SInt(width=32))
+  val w_al_bl       = Wire(UInt(width=32))
+
+  // int32_t  AC    = A*C;
+  // int32_t  AD_CB = A*D + C*B;
+  // uint32_t BD    = B*D;
+  w_ah_bh       := w_a_hi * w_b_hi
+  w_ah_bl_al_bh := w_a_hi * w_b_lo + w_a_lo * w_b_hi
+  w_al_bl       := w_a_lo * w_b_lo
+
+  val product_hi = Wire(SInt(width=32))
+  product_hi := w_al_bl + w_ah_bl_al_bh(31,16)
+  val product_hi2 = Wire(SInt(width=32))
+
+  val product_lo = Wire(UInt(width=32))
+  product_lo := w_al_bl + Cat(w_ah_bl_al_bh, UInt(0,width=16))
+
+  when (product_lo < w_al_bl) {
+    product_hi2 := product_hi + SInt(1)
+  } .otherwise {
+    product_hi2 := product_hi
+  }
+
+  val product_hi3 = Wire(SInt(width=32))
+
+  when (product_lo - UInt(0x8000) - product_hi(31) > product_lo) {
+    product_hi3 := product_hi2 - SInt(1)
+  } .otherwise {
+    product_hi3 := product_hi2
+  }
+
+  w_result := Cat(product_hi3(15, 0), product_lo(31,16)).asSInt() + SInt(1)
 
   // control
   when (io.mem.req.fire()) {
