@@ -7,6 +7,8 @@ import freechips.rocketchip.config.Parameters
 
 package object diplomacy
 {
+  type SimpleNodeHandle[D, U, E, B <: Chisel.Data] = NodeHandle[D, U, E, B, D, U, E, B]
+
   def sourceLine(sourceInfo: SourceInfo, prefix: String = " (", suffix: String = ")") = sourceInfo match {
     case SourceLine(filename, line, col) => s"$prefix$filename:$line:$col$suffix"
     case _ => ""
@@ -22,22 +24,39 @@ package object diplomacy
     }
   }
 
-  def SinkCardinality[T](body: Parameters => T)(implicit p: Parameters) = body(p.alterPartial {
-    case CardinalityInferenceDirectionKey => CardinalityInferenceDirection.SINK_TO_SOURCE
-  })
-  def SourceCardinality[T](body: Parameters => T)(implicit p: Parameters) = body(p.alterPartial {
-    case CardinalityInferenceDirectionKey => CardinalityInferenceDirection.SOURCE_TO_SINK
-  })
-  def UnaryCardinality[T](body: Parameters => T)(implicit p: Parameters) = body(p.alterPartial {
-    case CardinalityInferenceDirectionKey => CardinalityInferenceDirection.NO_INFERENCE
-  })
-  def FlipCardinality[T](body: Parameters => T)(implicit p: Parameters) = body(p.alterPartial {
-    case CardinalityInferenceDirectionKey => p(CardinalityInferenceDirectionKey).flip
-  })
+  implicit class BigIntHexContext(val sc: StringContext) extends AnyVal {
+    def x(args: Any*): BigInt = {
+      val orig = sc.s(args: _*)
+      BigInt(orig.replace("_", ""), 16)
+    }
+  }
+
+  type PropertyOption = Option[(String, Seq[ResourceValue])]
+  type PropertyMap = Iterable[(String, Seq[ResourceValue])]
+
+  implicit class IntToProperty(x: Int) {
+    def asProperty: Seq[ResourceValue] = Seq(ResourceInt(BigInt(x)))
+  }
+
+  implicit class BigIntToProperty(x: BigInt) {
+    def asProperty: Seq[ResourceValue] = Seq(ResourceInt(x))
+  }
+
+  implicit class StringToProperty(x: String) {
+    def asProperty: Seq[ResourceValue] = Seq(ResourceString(x))
+  }
+
+  implicit class DeviceToPeroperty(x: Device) {
+    def asProperty: Seq[ResourceValue] = Seq(ResourceReference(x.label))
+  }
+
   def EnableMonitors[T](body: Parameters => T)(implicit p: Parameters) = body(p.alterPartial {
     case MonitorsEnabled => true
   })
   def DisableMonitors[T](body: Parameters => T)(implicit p: Parameters) = body(p.alterPartial {
     case MonitorsEnabled => false
+  })
+  def FlipRendering[T](body: Parameters => T)(implicit p: Parameters) = body(p.alterPartial {
+    case RenderFlipped => !p(RenderFlipped)
   })
 }

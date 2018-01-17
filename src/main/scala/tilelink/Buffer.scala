@@ -3,7 +3,6 @@
 package freechips.rocketchip.tilelink
 
 import Chisel._
-import chisel3.internal.sourceinfo.SourceInfo
 import freechips.rocketchip.config.Parameters
 import freechips.rocketchip.diplomacy._
 import scala.math.{min,max}
@@ -13,7 +12,7 @@ class TLBufferNode (
   b: BufferParams,
   c: BufferParams,
   d: BufferParams,
-  e: BufferParams)(implicit p: Parameters) extends TLAdapterNode(
+  e: BufferParams)(implicit valName: ValName) extends TLAdapterNode(
     clientFn  = { p => p.copy(minLatency = p.minLatency + b.latency + c.latency) },
     managerFn = { p => p.copy(minLatency = p.minLatency + a.latency + d.latency) }
 ) {
@@ -35,12 +34,7 @@ class TLBuffer(
   val node = new TLBufferNode(a, b, c, d, e)
 
   lazy val module = new LazyModuleImp(this) {
-    val io = new Bundle {
-      val in  = node.bundleIn
-      val out = node.bundleOut
-    }
-
-    ((io.in zip io.out) zip (node.edgesIn zip node.edgesOut)) foreach { case ((in, out), (edgeIn, edgeOut)) =>
+    (node.in zip node.out) foreach { case ((in, edgeIn), (out, edgeOut)) =>
       out.a <> a(in .a)
       in .d <> d(out.d)
 
@@ -62,53 +56,23 @@ class TLBuffer(
 
 object TLBuffer
 {
-  // applied to the TL source node; y.node := TLBuffer(x.node)
-  def apply()                                   (x: TLOutwardNode)(implicit p: Parameters, sourceInfo: SourceInfo): TLOutwardNode = apply(BufferParams.default)(x)
-  def apply(abcde: BufferParams)                (x: TLOutwardNode)(implicit p: Parameters, sourceInfo: SourceInfo): TLOutwardNode = apply(abcde, abcde)(x)
-  def apply(ace: BufferParams, bd: BufferParams)(x: TLOutwardNode)(implicit p: Parameters, sourceInfo: SourceInfo): TLOutwardNode = apply(ace, bd, ace, bd, ace)(x)
+  def apply()                                   (implicit p: Parameters): TLNode = apply(BufferParams.default)
+  def apply(abcde: BufferParams)                (implicit p: Parameters): TLNode = apply(abcde, abcde)
+  def apply(ace: BufferParams, bd: BufferParams)(implicit p: Parameters): TLNode = apply(ace, bd, ace, bd, ace)
   def apply(
       a: BufferParams,
       b: BufferParams,
       c: BufferParams,
       d: BufferParams,
-      e: BufferParams)(x: TLOutwardNode)(implicit p: Parameters, sourceInfo: SourceInfo): TLOutwardNode = {
+      e: BufferParams)(implicit p: Parameters): TLNode =
+  {
     val buffer = LazyModule(new TLBuffer(a, b, c, d, e))
-    buffer.node :=? x
     buffer.node
   }
-}
 
-class TLBufferChain(depth: Int)(implicit p: Parameters) extends LazyModule {
-
-  val nodeIn = TLInputNode()
-  val nodeOut = TLOutputNode()
-  val node = NodeHandle(nodeIn, nodeOut)
-
-  val buf_chain = if (depth > 0) {
-    val chain = List.fill(depth)(LazyModule(new TLBuffer(BufferParams.default)))
-
-    (chain.init zip chain.tail) foreach { case(prev, next) => next.node :=? prev.node }
-    chain
-  } else {
-    List(LazyModule(new TLBuffer(BufferParams.none)))
-  }
-
-  buf_chain.head.node :=? nodeIn
-  nodeOut :=? buf_chain.last.node
-
-  lazy val module = new LazyModuleImp(this) {
-    val io = new Bundle {
-      val in  = nodeIn.bundleIn
-      val out = nodeOut.bundleOut
-    }
-  }
-}
-
-object TLBufferChain
-{
-  def apply(depth: Int)(x: TLOutwardNode)(implicit p: Parameters, sourceInfo: SourceInfo): TLOutwardNode = {
-    val buffer = LazyModule(new TLBufferChain(depth))
-    buffer.node :=? x
-    buffer.node
+  def chain(depth: Int, name: Option[String] = None)(implicit p: Parameters): Seq[TLNode] = {
+    val buffers = Seq.fill(depth) { LazyModule(new TLBuffer()) }
+    name.foreach { n => buffers.zipWithIndex.foreach { case (b, i) => b.suggestName(s"${n}_${i}") } }
+    buffers.map(_.node)
   }
 }

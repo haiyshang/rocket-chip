@@ -19,7 +19,7 @@ case class JtagDTMConfig (
   // the lines of p(JtagDTMKey).idcodeManufId.U(11.W).
   debugIdleCycles  : Int)
 
-case object JtagDTMKey extends Field[JtagDTMConfig]
+case object JtagDTMKey extends Field[JtagDTMConfig](new JtagDTMKeyDefault())
 
 class JtagDTMKeyDefault extends JtagDTMConfig(
   idcodeVersion = 0,
@@ -243,7 +243,8 @@ class DebugTransportModuleJTAG(debugAddrBits: Int, c: JtagDTMConfig)
   idcode.mfrId      := io.jtag_mfr_id
 
   val tapIO = JtagTapGenerator(irLength = 5,
-    instructions = Map(dtmJTAGAddrs.DMI_ACCESS -> dmiAccessChain,
+    instructions = Map(
+      dtmJTAGAddrs.DMI_ACCESS -> dmiAccessChain,
       dtmJTAGAddrs.DTM_INFO   -> dtmInfoChain),
     icode = Some(dtmJTAGAddrs.IDCODE)
   )

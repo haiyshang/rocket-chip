@@ -15,7 +15,7 @@ case class FrontBusParams(
   slaveBuffering: BufferParams = BufferParams.default
 ) extends TLBusParams
 
-case object FrontBusParams extends Field[FrontBusParams]
+case object FrontBusKey extends Field[FrontBusParams]
 
 class FrontBus(params: FrontBusParams)(implicit p: Parameters) extends TLBusWrapper(params, "FrontBus") {
 
@@ -29,20 +29,16 @@ class FrontBus(params: FrontBusParams)(implicit p: Parameters) extends TLBusWrap
   inwardNode :=* master_fixer.node
 
   def fromSyncPorts(addBuffers: Int = 0, name: Option[String] = None): TLInwardNode = {
-    val (in, out) = bufferChain(addBuffers, name)
-    master_buffer.node :=* out
-    in
+    TLBuffer.chain(addBuffers).foldLeft(master_buffer.node:TLInwardNode)(_ :=* _)
   }
 
   def fromSyncMasters(addBuffers: Int = 0, name: Option[String] = None): TLInwardNode = {
-    val (in, out) = bufferChain(addBuffers, name)
-    master_buffer.node :=* out
-    in
+    TLBuffer.chain(addBuffers).foldLeft(master_buffer.node:TLInwardNode)(_ :=* _)
   }
 
   def fromCoherentChip: TLInwardNode = inwardNode
 
-  def toSystemBus : TLOutwardNode = outwardBufNode
+  def toSystemBus : TLOutwardNode = TLBuffer(params.slaveBuffering) :=* xbar.node
 
 }
 
@@ -50,11 +46,10 @@ class FrontBus(params: FrontBusParams)(implicit p: Parameters) extends TLBusWrap
   * for use in traits that connect individual devices or external ports.
   */
 trait HasFrontBus extends HasSystemBus {
-  private val frontbusParams = p(FrontBusParams)
+  private val frontbusParams = p(FrontBusKey)
   val frontbusBeatBytes = frontbusParams.beatBytes
 
-  val fbus = new FrontBus(frontbusParams)
+  val fbus = LazyModule(new FrontBus(frontbusParams))
 
-  sbus.fromFrontBus := fbus.toSystemBus
-
+  FlipRendering { implicit p => sbus.fromFrontBus :=* fbus.toSystemBus }
 }

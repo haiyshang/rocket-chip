@@ -5,13 +5,15 @@ package freechips.rocketchip.config
 abstract class Field[T] private (val default: Option[T])
 {
   def this() = this(None)
-  def this(x: T) = this(Some(x))
+  def this(default: T) = this(Some(default))
 }
 
 abstract class View {
   final def apply[T](pname: Field[T]): T = apply(pname, this)
-  final def apply[T](pname: Field[T], site: View): T = find(pname, site) match {
-    case Some(x) => x.asInstanceOf[T]
+  final def apply[T](pname: Field[T], site: View): T = {
+    val out = find(pname, site)
+    require (out.isDefined, s"Key ${pname} is not defined in Parameters")
+    out.get
   }
 
   final def lift[T](pname: Field[T]): Option[T] = lift(pname, this)

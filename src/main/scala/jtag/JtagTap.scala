@@ -2,8 +2,15 @@
 
 package freechips.rocketchip.jtag
 
-import chisel3._
+import scala.collection.SortedMap
+
+// !!! See Issue #1160.
+// import chisel3._
+import Chisel._
+import chisel3.core.{Input, Output}
 import chisel3.util._
+import freechips.rocketchip.config.Parameters
+
 /** JTAG signals, viewed from the master side
   */
 class JTAGIO(hasTRSTn: Boolean = false) extends Bundle {
@@ -57,7 +64,7 @@ class JtagControllerIO(irLength: Int) extends JtagBlockIO(irLength, false) {
   * Misc notes:
   * - Figure 6-3 and 6-4 provides examples with timing behavior
   */
-class JtagTapController(irLength: Int, initialInstruction: BigInt) extends Module {
+class JtagTapController(irLength: Int, initialInstruction: BigInt)(implicit val p: Parameters) extends Module {
   require(irLength >= 2)  // 7.1.1a
 
   val io = IO(new JtagControllerIO(irLength))
@@ -107,6 +114,8 @@ class JtagTapController(irLength: Int, initialInstruction: BigInt) extends Modul
     nextActiveInstruction := irChain.io.update.bits
     updateInstruction := true.B
   } .otherwise {
+    //!!! Needed when using chisel3._ (See #1160)
+    // nextActiveInstruction := DontCare
     updateInstruction := false.B
   }
   io.output.instruction := activeInstruction
@@ -131,6 +140,8 @@ class JtagTapController(irLength: Int, initialInstruction: BigInt) extends Modul
     tdo := irChain.io.chainOut.data
     tdo_driven := true.B
   } .otherwise {
+    //!!! Needed when using chisel3._ (See #1160)
+    //tdo := DontCare
     tdo_driven := false.B
   }
 }
@@ -160,7 +171,7 @@ object JtagTapGenerator {
     * TODO:
     * - support concatenated scan chains
     */
-  def apply(irLength: Int, instructions: Map[BigInt, Chain], icode: Option[BigInt] = None): JtagBlockIO = {
+  def apply(irLength: Int, instructions: Map[BigInt, Chain], icode: Option[BigInt] = None)(implicit p: Parameters): JtagBlockIO = {
 
     val internalIo = Wire(new JtagBlockIO(irLength, icode.isDefined))
 
@@ -201,9 +212,12 @@ object JtagTapGenerator {
     bypassChain.io.chainIn := controllerInternal.io.dataChainOut  // for simplicity, doesn't visibly affect anything else
     require(allInstructions.size > 0, "Seriously? JTAG TAP with no instructions?")
 
-    val chainToIcode = allInstructions groupBy { case (icode, chain) => chain } map {
+    // Need to ensure that this mapping is ordered to produce deterministic verilog,
+    // and neither Map nor groupBy are deterministic.
+    // Therefore, we first sort by IDCODE, then sort the groups by the first IDCODE in each group.
+    val chainToIcode = (SortedMap(allInstructions.toList:_*).groupBy { case (icode, chain) => chain } map {
       case (chain, icodeToChain) => chain -> icodeToChain.keys
-    }
+    }).toList.sortBy(_._2.head)
 
     val chainToSelect = chainToIcode map {
       case (chain, icodes) => {
@@ -238,8 +252,8 @@ object JtagTapGenerator {
     chainToSelect.map(mapInSelect)
 
     controllerInternal.io.jtag <> internalIo.jtag
-    controllerInternal.io.control <> internalIo.control
-    controllerInternal.io.output <> internalIo.output
+    internalIo.control <> controllerInternal.io.control
+    internalIo.output <> controllerInternal.io.output
 
     internalIo
   }
