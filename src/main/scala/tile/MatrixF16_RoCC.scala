@@ -35,7 +35,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
 
   // datapath
   val r_total = Reg(SInt(width = xLen))
-  val r_h_val = Reg(UInt(width = xLen))
+  val r_a_val = Reg(UInt(width = xLen))
   val r_tag   = Reg(UInt(width = n))
 
   val w_result = Wire(SInt(width=32))
@@ -43,6 +43,10 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val s_idle :: s_mem_fetch :: s_recv_finish :: s_mem_recv :: Nil = Enum(Bits(), 4)
   val r_cmd_state  = Reg(UInt(width = 3), init = s_idle)
   val r_recv_state = Reg(UInt(width = 3), init = s_idle)
+
+  val w_ah_bh       = Wire(SInt(width=32))
+  val w_ah_bl_al_bh = Wire(SInt(width=32))
+  val w_al_bl       = Wire(UInt(width=32))
 
   when (io.cmd.fire() && setM) {
     printf("DotProductF16: SetLengthM Request. %x\n", io.cmd.bits.rs1)
@@ -110,20 +114,23 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val recv_finished = (r_recv_count === cmd_request_max)
   when (r_recv_state === s_mem_recv && io.mem.resp.fire()) {
     printf("DotProductF16: <<s_mem_recv_v>> IO.MEM Received %x (r_count=%d)\n", io.mem.resp.bits.data, r_recv_count)
-
     r_recv_count := Mux(recv_finished, UInt(0), r_recv_count + UInt(1))
     r_recv_state := Mux(recv_finished, s_recv_finish, s_mem_recv)
 
-    r_h_val      := Mux(r_recv_count(0), r_h_val, io.mem.resp.bits.data)
+    r_a_val      := Mux(r_recv_count(0), r_a_val, io.mem.resp.bits.data)
 
     r_total      := Mux(r_recv_count(0), r_total + w_result, r_total)
+
     when (r_recv_count(0)) {
-      printf("DotProductF16: <<s_mem_recv_v>> r_total update %x\n", r_total)
+      printf("DotProductF16: <<s_mem_recv_v>> w_result update %x\n", w_result)
+      printf("DotProductF16: <<calc >> %x,%x,%x\n", w_ah_bh, w_ah_bl_al_bh, w_al_bl)
     }
   }
 
-  val w_a_val = Wire(UInt(width = xLen))
-  val w_b_val = io.mem.resp.bits.data;
+  val w_a_val = Wire(UInt(width = 32))
+  val w_b_val = Wire(UInt(width = 32))
+  w_a_val := r_a_val
+  w_b_val := io.mem.resp.bits.data;
 
   val w_a_hi = Wire(SInt(width=32))
   val w_b_hi = Wire(SInt(width=32))
@@ -137,10 +144,6 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   w_a_lo := Cat(UInt(0, 16), w_a_val(15, 0))
   w_b_lo := Cat(UInt(0, 16), w_b_val(15, 0))
 
-  val w_ah_bh       = Wire(SInt(width=32))
-  val w_ah_bl_al_bh = Wire(SInt(width=32))
-  val w_al_bl       = Wire(UInt(width=32))
-
   // int32_t  AC    = A*C;
   // int32_t  AD_CB = A*D + C*B;
   // uint32_t BD    = B*D;
@@ -149,12 +152,12 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   w_al_bl       := w_a_lo * w_b_lo
 
   val product_hi = Wire(SInt(width=32))
-  product_hi := w_al_bl.asSInt() + w_ah_bl_al_bh(31,16).asSInt()
-  val product_hi2 = Wire(SInt(width=32))
+  product_hi := w_ah_bh + w_ah_bl_al_bh(31,16).asSInt()
 
   val product_lo = Wire(UInt(width=32))
   product_lo := w_al_bl + Cat(w_ah_bl_al_bh, UInt(0,width=16))
 
+  val product_hi2 = Wire(SInt(width=32))
   when (product_lo < w_al_bl) {
     product_hi2 := product_hi + SInt(1)
   } .otherwise {
@@ -162,14 +165,15 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   }
 
   val product_hi3 = Wire(SInt(width=32))
-
-  when (product_lo - UInt(0x8000) - product_hi(31) > product_lo) {
+  val product_lo2 = Wire(UInt(width=32))
+  product_lo2 := product_lo - UInt(0x8000) - product_hi(31)
+  when (product_lo2 > product_lo) {
     product_hi3 := product_hi2 - SInt(1)
   } .otherwise {
     product_hi3 := product_hi2
   }
 
-  w_result := Cat(product_hi3(15, 0), product_lo(31,16)).asSInt() + SInt(1)
+  w_result := Cat(product_hi3(15, 0), product_lo2(31,16)).asSInt() + SInt(1)
 
   // control
   when (io.mem.req.fire()) {
