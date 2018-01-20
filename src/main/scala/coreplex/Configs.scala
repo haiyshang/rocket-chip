@@ -189,8 +189,8 @@ class WithRoccExample extends Config((site, here, up) => {
         RoCCParams(
           opcodes = OpcodeSet.custom0,
           generator = (p: Parameters) => {
-            val matrixmul32 = LazyModule(new MatrixMul32()(p))
-            matrixmul32}),
+            val dot_product_f16 = LazyModule(new DotProductF16()(p))
+            dot_product_f16}),
         RoCCParams(
           opcodes = OpcodeSet.custom1,
           generator = (p: Parameters) => {

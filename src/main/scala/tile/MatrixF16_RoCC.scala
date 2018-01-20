@@ -122,7 +122,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
     }
   }
 
-  val w_a_val = r_h_val;
+  val w_a_val = Wire(UInt(width = xLen))
   val w_b_val = io.mem.resp.bits.data;
 
   val w_a_hi = Wire(SInt(width=32))
@@ -132,8 +132,8 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
 
   // int32_t  A = (a_val >> 16),    C = (b_val >> 16);
   // uint32_t B = (a_val & 0xFFFF), D = (b_val & 0xFFFF);
-  w_a_hi := Cat(Fill(16, w_a_val(31)), w_a_val(31,16))
-  w_b_hi := Cat(Fill(16, w_b_val(31)), w_b_val(31,16))
+  w_a_hi := w_a_val(31,16).asSInt()
+  w_b_hi := w_b_val(31,16).asSInt()
   w_a_lo := Cat(UInt(0, 16), w_a_val(15, 0))
   w_b_lo := Cat(UInt(0, 16), w_b_val(15, 0))
 
@@ -149,7 +149,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   w_al_bl       := w_a_lo * w_b_lo
 
   val product_hi = Wire(SInt(width=32))
-  product_hi := w_al_bl + w_ah_bl_al_bh(31,16)
+  product_hi := w_al_bl.asSInt() + w_ah_bl_al_bh(31,16).asSInt()
   val product_hi2 = Wire(SInt(width=32))
 
   val product_lo = Wire(UInt(width=32))
@@ -186,7 +186,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   // valid response if valid command, need a response, and no stalls
   io.resp.bits.rd := r_resp_rd
   // Must respond with the appropriate tag or undefined behavior
-  io.resp.bits.data := r_total
+  io.resp.bits.data := r_total.asUInt()
   // Semantics is to always send out prior accumulator register value
 
   io.busy := Bool(false)
@@ -194,5 +194,3 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   io.interrupt := Bool(false)
   // Set this true to trigger an interrupt on the processor (please refer to supervisor documentation)
 }
-
-
