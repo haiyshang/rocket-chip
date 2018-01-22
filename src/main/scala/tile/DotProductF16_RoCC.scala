@@ -44,9 +44,11 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val r_cmd_state  = Reg(UInt(width = 3), init = s_idle)
   val r_recv_state = Reg(UInt(width = 3), init = s_idle)
 
-  val w_ah_bh       = Wire(SInt(width=32))
-  val w_ah_bl_al_bh = Wire(SInt(width=32))
-  val w_al_bl       = Wire(UInt(width=32))
+  val w_ah_bh       = Reg(SInt(width=32))
+  val w_ah_bl_al_bh = Reg(SInt(width=32))
+  val w_al_bl       = Reg(UInt(width=32))
+
+  val r_recv_valid  = Reg(init = {Bool(false)})
 
   when (io.cmd.fire() && setM) {
     printf("DotProductF16: SetLengthM Request. %x\n", io.cmd.bits.rs1)
@@ -94,7 +96,16 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
 
     r_h_addr     := Mux(r_cmd_count(0), r_h_addr, r_h_addr + UInt(4))
     r_v_addr     := Mux(r_cmd_count(0), r_v_addr + (r_v_step << UInt(2)), r_v_addr)
+
+    when (r_cmd_count(0)) {
+      r_recv_valid := UInt(1)
+    } .otherwise {
+      r_recv_valid := UInt(0)
+    }
+
     r_cmd_state  := Mux(cmd_finished, s_idle, s_mem_fetch)
+  } .otherwise {
+    r_recv_valid := UInt(0)
   }
 
   when (io.mem.req.fire()) {
@@ -119,12 +130,12 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
 
     r_a_val      := Mux(r_recv_count(0), r_a_val, io.mem.resp.bits.data)
 
-    r_total      := Mux(r_recv_count(0), r_total + w_result, r_total)
+  }
 
-    when (r_recv_count(0)) {
-      printf("DotProductF16: <<s_mem_recv_v>> w_result update %x\n", w_result)
-      printf("DotProductF16: <<calc >> %x,%x,%x\n", w_ah_bh, w_ah_bl_al_bh, w_al_bl)
-    }
+
+  when (r_recv_valid) {
+    r_total      := Mux(r_recv_count(0), r_total + w_result, r_total)
+    printf("DotProductF16: <<s_mem_recv_v>> w_result update %x\n", w_result)
   }
 
   val w_a_val = Wire(UInt(width = 32))
