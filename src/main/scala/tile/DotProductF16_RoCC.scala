@@ -17,10 +17,11 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   with HasCoreParameters {
   val busy = Reg(init = {Bool(false)})
 
-  val funct  = io.cmd.bits.inst.funct
-  val setM   = (funct === UInt(0))
-  val setK   = (funct === UInt(1))
-  val doCalc = (funct === UInt(2))
+  val funct   = io.cmd.bits.inst.funct
+  val setM    = (funct === UInt(0))
+  val setK    = (funct === UInt(1))
+  val doCalc  = (funct === UInt(2))
+  val readLog = (funct === UInt(3))
 
   val r_cmd_count  = Reg(UInt(width = xLen))
   val r_recv_count = Reg(UInt(width = xLen))
@@ -40,7 +41,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
 
   val w_result = Wire(SInt(width=32))
 
-  val s_idle :: s_mem_fetch :: s_recv_finish :: s_mem_recv :: Nil = Enum(Bits(), 4)
+  val s_idle :: s_mem_fetch :: s_recv_finish :: s_mem_recv :: s_recv_readLog_finish :: Nil = Enum(Bits(), 5)
   val r_cmd_state  = Reg(UInt(width = 3), init = s_idle)
   val r_recv_state = Reg(UInt(width = 3), init = s_idle)
 
@@ -49,6 +50,12 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val w_al_bl       = Reg(UInt(width=32))
 
   val r_recv_valid  = Reg(init = {Bool(false)})
+
+  val memlog = Wire(UInt(width = 32))
+  val log_regfile = Mem(128, UInt(width = 32))
+  val r_recv_log_count = Reg(UInt(width=32))
+
+  val log_addr = io.cmd.bits.rs1
 
   when (io.cmd.fire() && setM) {
     printf("DotProductF16: SetLengthM Request. %x\n", io.cmd.bits.rs1)
@@ -60,6 +67,11 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
     printf("DotProductF16: SetLengthK Request. %x\n", io.cmd.bits.rs1)
     r_v_step     := io.cmd.bits.rs1
     r_recv_state := s_recv_finish
+  }
+
+  when (io.cmd.fire() && readLog) {
+    printf("DotProductF16: ReadLog[%d] = %x.\n", log_addr, log_regfile(log_addr))
+    r_recv_state := s_recv_readLog_finish
   }
 
   when (io.cmd.fire()) {
@@ -97,15 +109,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
     r_h_addr     := Mux(r_cmd_count(0), r_h_addr, r_h_addr + UInt(4))
     r_v_addr     := Mux(r_cmd_count(0), r_v_addr + (r_v_step << UInt(2)), r_v_addr)
 
-    when (r_cmd_count(0)) {
-      r_recv_valid := UInt(1)
-    } .otherwise {
-      r_recv_valid := UInt(0)
-    }
-
     r_cmd_state  := Mux(cmd_finished, s_idle, s_mem_fetch)
-  } .otherwise {
-    r_recv_valid := UInt(0)
   }
 
   when (io.mem.req.fire()) {
@@ -125,16 +129,23 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val recv_finished = (r_recv_count === cmd_request_max)
   when (r_recv_state === s_mem_recv && io.mem.resp.fire()) {
     printf("DotProductF16: <<s_mem_recv_v>> IO.MEM Received %x (r_count=%d)\n", io.mem.resp.bits.data, r_recv_count)
+
     r_recv_count := Mux(recv_finished, UInt(0), r_recv_count + UInt(1))
     r_recv_state := Mux(recv_finished, s_recv_finish, s_mem_recv)
 
     r_a_val      := Mux(r_recv_count(0), r_a_val, io.mem.resp.bits.data)
 
+    when (r_recv_count(0)) {
+      r_recv_valid := UInt(1)
+    } .otherwise {
+      r_recv_valid := UInt(0)
+    }
+  } .otherwise {
+    r_recv_valid := UInt(0)
   }
 
-
   when (r_recv_valid) {
-    r_total      := Mux(r_recv_count(0), r_total + w_result, r_total)
+    r_total := r_total + w_result
     printf("DotProductF16: <<s_mem_recv_v>> w_result update %x\n", w_result)
   }
 
@@ -196,16 +207,39 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
     printf("DotProductF16: Finished. Answer = %x\n", r_total)
   }
 
+  when ((r_recv_state === s_recv_readLog_finish) && io.resp.fire()) {
+    r_recv_state := s_idle
+    printf("DotProductF16: Finished. Answer = %x\n", r_total)
+  }
+
+  memlog := log_regfile(log_addr)
+
   // PROC RESPONSE INTERFACE
-  io.resp.valid := (r_recv_state === s_recv_finish)
+  io.resp.valid := (r_recv_state === s_recv_finish) || (r_recv_state === s_recv_readLog_finish)
   // valid response if valid command, need a response, and no stalls
   io.resp.bits.rd := r_resp_rd
   // Must respond with the appropriate tag or undefined behavior
-  io.resp.bits.data := r_total.asUInt()
+  io.resp.bits.data := Mux(r_recv_state === s_recv_readLog_finish, memlog, r_total.asUInt())
   // Semantics is to always send out prior accumulator register value
 
   io.busy := Bool(false)
   // Be busy when have pending memory requests or committed possibility of pending requests
   io.interrupt := Bool(false)
   // Set this true to trigger an interrupt on the processor (please refer to supervisor documentation)
+
+
+  //=================================================
+  // Logger
+  //=================================================
+  val log_regfile_in = Wire(SInt(width=32))
+  log_regfile_in := r_total + w_result
+  when (r_recv_valid) {
+    log_regfile(r_recv_log_count) := log_regfile_in.asUInt()
+    r_recv_log_count := r_recv_log_count + UInt(1)
+  }
+
+  when (io.cmd.fire() && doCalc) {
+    r_recv_log_count := UInt(0)
+  }
+
 }
