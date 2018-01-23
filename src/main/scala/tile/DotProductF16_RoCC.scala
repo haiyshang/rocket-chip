@@ -55,7 +55,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val log_regfile = Mem(128, UInt(width = 32))
   val r_recv_log_count = Reg(UInt(width=32))
 
-  val log_addr = io.cmd.bits.rs1
+  val r_log_addr = Reg(UInt(width=32))
 
   when (io.cmd.fire() && setM) {
     printf("DotProductF16: SetLengthM Request. %x\n", io.cmd.bits.rs1)
@@ -70,7 +70,8 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   }
 
   when (io.cmd.fire() && readLog) {
-    printf("DotProductF16: ReadLog[%d] = %x.\n", log_addr, log_regfile(log_addr))
+    printf("DotProductF16: ReadLog[%d] = %x.\n", io.cmd.bits.rs1, log_regfile(r_log_addr))
+    r_log_addr := io.cmd.bits.rs1
     r_recv_state := s_recv_readLog_finish
   }
 
@@ -209,10 +210,10 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
 
   when ((r_recv_state === s_recv_readLog_finish) && io.resp.fire()) {
     r_recv_state := s_idle
-    printf("DotProductF16: Finished. Answer = %x\n", r_total)
+    printf("DotProductF16: LogRead Finished = %x\n", memlog)
   }
 
-  memlog := log_regfile(log_addr)
+  memlog := log_regfile(r_log_addr)
 
   // PROC RESPONSE INTERFACE
   io.resp.valid := (r_recv_state === s_recv_finish) || (r_recv_state === s_recv_readLog_finish)
@@ -232,14 +233,24 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   // Logger
   //=================================================
   val log_regfile_in = Wire(SInt(width=32))
+  val r_log_overflow = Reg(init = {Bool(false)})
+
   log_regfile_in := r_total + w_result
-  when (r_recv_valid) {
-    log_regfile(r_recv_log_count) := log_regfile_in.asUInt()
-    r_recv_log_count := r_recv_log_count + UInt(1)
+  when (r_recv_valid && r_log_overflow === Bool(false)) {
+    // log_regfile(r_recv_log_count) := log_regfile_in.asUInt()
+    log_regfile(r_recv_log_count) := r_recv_log_count
+
+    printf("Memory Logging mem[%x] = %x\n", r_recv_log_count, r_recv_log_count)
+
+    when (r_recv_log_count === UInt(127)) {
+      r_log_overflow := Bool(true)
+    } .otherwise {
+      r_recv_log_count := r_recv_log_count + UInt(1)
+    }
   }
 
   when (io.cmd.fire() && doCalc) {
     r_recv_log_count := UInt(0)
+    r_log_overflow   := Bool(false)
   }
-
 }
