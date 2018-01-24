@@ -44,7 +44,7 @@ class RoCCInterface(implicit p: Parameters) extends CoreBundle()(p) {
   val mem = new HellaCacheIO()(p.alterPartial({ case CacheName => "L1D" }))
   val busy = Bool(OUTPUT)
   val interrupt = Bool(OUTPUT)
-  
+
   // These should be handled differently, eventually
   val autl = new ClientUncachedTileLinkIO
   val utl = Vec(p(RoccNMemChannels), new ClientUncachedTileLinkIO)
