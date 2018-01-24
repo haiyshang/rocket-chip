@@ -18,10 +18,12 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val busy = Reg(init = {Bool(false)})
 
   val funct   = io.cmd.bits.inst.funct
-  val setM    = (funct === UInt(0))
-  val setK    = (funct === UInt(1))
-  val doCalc  = (funct === UInt(2))
-  val readLog = (funct === UInt(3))
+  val setM         = (funct === UInt(0))
+  val setK         = (funct === UInt(1))
+  val doCalc       = (funct === UInt(2))
+  val getResultMem = (funct === UInt(3))
+  val getInputMem  = (funct === UInt(4))
+  val getWeightMem = (funct === UInt(5))
 
   val r_cmd_count  = Reg(UInt(width = xLen))
   val r_recv_count = Reg(UInt(width = xLen))
@@ -41,7 +43,8 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
 
   val w_result = Wire(SInt(width=32))
 
-  val s_idle :: s_mem_fetch :: s_recv_finish :: s_mem_recv :: s_recv_readLog_finish :: Nil = Enum(Bits(), 5)
+  val s_idle :: s_mem_fetch :: s_recv_finish :: s_mem_recv :: s_recv_resultLog_finish :: s_recv_inputLog_finish :: s_recv_weightLog_finish :: Nil = Enum(Bits(), 7)
+
   val r_cmd_state  = Reg(UInt(width = 3), init = s_idle)
   val r_recv_state = Reg(UInt(width = 3), init = s_idle)
 
@@ -51,9 +54,15 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
 
   val r_recv_valid  = Reg(init = {Bool(false)})
 
-  val memlog = Wire(UInt(width = 32))
-  val log_regfile = Mem(128, UInt(width = 32))
-  val r_recv_log_count = Reg(UInt(width=32))
+  var logmem_word_len = 1024;
+
+  val result_regfile = Mem(logmem_word_len, UInt(width = 32))
+  val input_regfile  = Mem(logmem_word_len, UInt(width = 32))
+  val weight_regfile = Mem(logmem_word_len, UInt(width = 32))
+
+  val r_result_log_count = Reg(UInt(width=32))
+  val r_input_log_count  = Reg(UInt(width=32))
+  val r_weight_log_count = Reg(UInt(width=32))
 
   val r_log_addr = Reg(UInt(width=32))
 
@@ -69,11 +78,24 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
     r_recv_state := s_recv_finish
   }
 
-  when (io.cmd.fire() && readLog) {
-    printf("DotProductF16: ReadLog[%d] = %x.\n", io.cmd.bits.rs1, log_regfile(r_log_addr))
-    r_log_addr := io.cmd.bits.rs1
-    r_recv_state := s_recv_readLog_finish
+  when (io.cmd.fire() && getResultMem) {
+    printf("DotProductF16: ResultMem[%d] = %x.\n", io.cmd.bits.rs1, result_regfile(r_log_addr))
+    r_log_addr   := io.cmd.bits.rs1
+    r_recv_state := s_recv_resultLog_finish
   }
+
+  when (io.cmd.fire() && getInputMem) {
+    printf("DotProductF16: InputMem[%d] = %x.\n", io.cmd.bits.rs1, input_regfile(r_log_addr))
+    r_log_addr   := io.cmd.bits.rs1
+    r_recv_state := s_recv_inputLog_finish
+  }
+
+  when (io.cmd.fire() && getWeightMem) {
+    printf("DotProductF16: WeightMem[%d] = %x.\n", io.cmd.bits.rs1, weight_regfile(r_log_addr))
+    r_log_addr   := io.cmd.bits.rs1
+    r_recv_state := s_recv_weightLog_finish
+  }
+
 
   when (io.cmd.fire()) {
     r_total   := SInt(0)
@@ -203,26 +225,48 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
     busy := Bool(true)
   }
 
-  when ((r_recv_state === s_recv_finish) && io.resp.fire()) {
-    r_recv_state := s_idle
-    printf("DotProductF16: Finished. Answer = %x\n", r_total)
-  }
+  val result_MemOutput = Wire(UInt(width = 32))
+  val input_MemOutput  = Wire(UInt(width = 32))
+  val weight_MemOutput = Wire(UInt(width = 32))
 
-  when ((r_recv_state === s_recv_readLog_finish) && io.resp.fire()) {
-    r_recv_state := s_idle
-    printf("DotProductF16: LogRead Finished = %x\n", memlog)
-  }
+  result_MemOutput := result_regfile(r_log_addr)
+  input_MemOutput  := input_regfile (r_log_addr)
+  weight_MemOutput := weight_regfile(r_log_addr)
 
-  memlog := log_regfile(r_log_addr)
+  when (io.resp.fire()) {
+    when (r_recv_state === s_recv_finish) {
+      r_recv_state := s_idle
+      printf ("DotProductF16: Finished. Answer = %x\n", r_total)
+    } .elsewhen (r_recv_state === s_recv_resultLog_finish) {
+      r_recv_state := s_idle
+      printf ("DotProductF16: MemResult Finished = %x\n", result_MemOutput)
+    } .elsewhen (r_recv_state === s_recv_inputLog_finish) {
+      r_recv_state := s_idle
+      printf ("DotProductF16: InputResult Finished = %x\n", input_MemOutput)
+    } .elsewhen (r_recv_state === s_recv_weightLog_finish) {
+      r_recv_state := s_idle
+      printf ("DotProductF16: WeightResult Finished = %x\n", weight_MemOutput)
+    }
+  }
 
   // PROC RESPONSE INTERFACE
-  io.resp.valid := (r_recv_state === s_recv_finish) || (r_recv_state === s_recv_readLog_finish)
+  io.resp.valid := (r_recv_state === s_recv_finish) || (r_recv_state === s_recv_resultLog_finish) || (r_recv_state === s_recv_inputLog_finish) || (r_recv_state === s_recv_weightLog_finish)
   // valid response if valid command, need a response, and no stalls
   io.resp.bits.rd := r_resp_rd
   // Must respond with the appropriate tag or undefined behavior
-  io.resp.bits.data := Mux(r_recv_state === s_recv_readLog_finish, memlog, r_total.asUInt())
-  // Semantics is to always send out prior accumulator register value
+  when (r_recv_state === s_recv_finish) {
+    io.resp.bits.data := r_total.asUInt()
+  } .elsewhen (r_recv_state === s_recv_resultLog_finish) {
+    io.resp.bits.data := result_MemOutput
+  } .elsewhen (r_recv_state === s_recv_inputLog_finish) {
+    io.resp.bits.data := input_MemOutput
+  } .elsewhen (r_recv_state === s_recv_weightLog_finish) {
+    io.resp.bits.data := weight_MemOutput
+  } .otherwise {
+    io.resp.bits.data := UInt(0)
+  }
 
+  // Semantics is to always send out prior accumulator register value
   io.busy := Bool(false)
   // Be busy when have pending memory requests or committed possibility of pending requests
   io.interrupt := Bool(false)
@@ -232,25 +276,45 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   //=================================================
   // Logger
   //=================================================
-  val log_regfile_in = Wire(SInt(width=32))
+  val result_regfile_in = Wire(SInt(width=32))
   val r_log_overflow = Reg(init = {Bool(false)})
 
-  log_regfile_in := r_total + w_result
+  result_regfile_in := r_total + w_result
   when (r_recv_valid && r_log_overflow === Bool(false)) {
-    // log_regfile(r_recv_log_count) := log_regfile_in.asUInt()
-    log_regfile(r_recv_log_count) := r_recv_log_count
+    result_regfile(r_result_log_count) := result_regfile_in.asUInt()
 
-    printf("Memory Logging mem[%x] = %x\n", r_recv_log_count, r_recv_log_count)
+    printf("ResultMem[%x] = %x\n", r_result_log_count, r_result_log_count)
 
-    when (r_recv_log_count === UInt(127)) {
+    when (r_result_log_count === UInt(logmem_word_len-1)) {
       r_log_overflow := Bool(true)
     } .otherwise {
-      r_recv_log_count := r_recv_log_count + UInt(1)
+      r_result_log_count := r_result_log_count + UInt(1)
     }
   }
 
+  // Input Logger
+  when (r_recv_state === s_mem_recv && io.mem.resp.fire() && !r_recv_count(0)) {
+    input_regfile(r_input_log_count) := io.mem.resp.bits.data
+
+    r_input_log_count := r_input_log_count + UInt(1)
+
+    printf("InputMem[%x] = %x\n", r_input_log_count, io.mem.resp.bits.data)
+  }
+
+  // Weight Logger
+  when (r_recv_state === s_mem_recv && io.mem.resp.fire() &&  r_recv_count(0)) {
+    weight_regfile(r_weight_log_count) := io.mem.resp.bits.data
+
+    r_weight_log_count := r_weight_log_count + UInt(1)
+
+    printf("InputMem[%x] = %x\n", r_weight_log_count, io.mem.resp.bits.data)
+  }
+
   when (io.cmd.fire() && doCalc) {
-    r_recv_log_count := UInt(0)
+    r_result_log_count := UInt(0)
+    r_input_log_count  := UInt(0)
+    r_weight_log_count := UInt(0)
+
     r_log_overflow   := Bool(false)
   }
 }
