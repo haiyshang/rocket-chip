@@ -2,12 +2,99 @@ package freechips.rocketchip.tile
 
 import Chisel._
 
+import chisel3.core.{Input, Output}
+
 import freechips.rocketchip.config._
-import freechips.rocketchip.coreplex._
-import freechips.rocketchip.diplomacy._
+// import freechips.rocketchip.coreplex._
+// import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.rocket._
-import freechips.rocketchip.tilelink._
-import freechips.rocketchip.util.InOrderArbiter
+// import freechips.rocketchip.tilelink._
+// import freechips.rocketchip.util.InOrderArbiter
+
+class Fix16Mul extends Module {
+  val io = IO(new Bundle {
+    val A_In   = Input(UInt(width = 32))
+    val B_In   = Input(UInt(width = 32))
+    val En_In  = Input(Bool())
+    val C_out  = Output(UInt(width = 32))
+    val En_out = Output(Bool())
+  })
+
+  val w_a_hi = Wire(SInt(width=32))
+  val w_b_hi = Wire(SInt(width=32))
+  val w_a_lo = Wire(UInt(width=32))
+  val w_b_lo = Wire(UInt(width=32))
+
+  // int32_t  A = (a_val >> 16),    C = (b_val >> 16);
+  // uint32_t B = (a_val & 0xFFFF), D = (b_val & 0xFFFF);
+  w_a_hi := io.A_In(31,16).asSInt()
+  w_b_hi := io.B_In(31,16).asSInt()
+  w_a_lo := Cat(UInt(0, 16), io.A_In(15, 0))
+  w_b_lo := Cat(UInt(0, 16), io.B_In(15, 0))
+
+  // int32_t  AC    = A*C;
+  // int32_t  AD_CB = A*D + C*B;
+  // uint32_t BD    = B*D;
+  val w_ah_bh       = Reg(SInt(width=32))
+  val w_ah_bl_al_bh = Reg(SInt(width=32))
+  val w_al_bl       = Reg(UInt(width=32))
+
+  w_ah_bh       := w_a_hi * w_b_hi
+  w_ah_bl_al_bh := w_a_hi * w_b_lo + w_a_lo * w_b_hi
+  w_al_bl       := w_a_lo * w_b_lo
+
+  val product_hi = Wire(SInt(width=32))
+  product_hi := w_ah_bh + w_ah_bl_al_bh(31,16).asSInt()
+
+  val product_lo = Wire(UInt(width=32))
+  product_lo := w_al_bl + Cat(w_ah_bl_al_bh, UInt(0,width=16))
+
+  val product_hi2 = Wire(SInt(width=32))
+  when (product_lo < w_al_bl) {
+    product_hi2 := product_hi + SInt(1)
+  } .otherwise {
+    product_hi2 := product_hi
+  }
+
+  val product_hi3 = Wire(SInt(width=32))
+  val product_lo2 = Wire(UInt(width=32))
+  product_lo2 := product_lo - UInt(0x8000) - product_hi(31)
+  when (product_lo2 > product_lo) {
+    product_hi3 := product_hi2 - SInt(1)
+  } .otherwise {
+    product_hi3 := product_hi2
+  }
+
+  io.C_out := Cat(product_hi3(15, 0), product_lo2(31,16)).asSInt() + SInt(1)
+
+  val r_en_out = Reg(Bool())
+  r_en_out := io.En_In
+  io.En_out := r_en_out
+}
+
+
+class LoggerRAM (DataWidth: Int, Length: Int) extends Module {
+  val io = IO(new Bundle {
+    val WData_In = Input(UInt(width = DataWidth))
+    val WAddr_In = Input(UInt(width = log2Ceil(Length)))
+    val We_In    = Input(Bool())
+
+    val RAddr_In = Input(UInt(width = log2Ceil(Length)))
+    val Data_Out = Output(UInt(width = DataWidth))
+  })
+
+  val memory = Mem(1024, UInt(width = DataWidth))
+
+  when (io.We_In) {
+    memory(io.WAddr_In) := io.WData_In
+  }
+
+  val w_data_out = Wire(UInt(width = DataWidth))
+  w_data_out := memory(io.RAddr_In)
+
+  io.Data_Out := w_data_out
+}
+
 
 class DotProductF16(implicit p: Parameters) extends LazyRoCC {
   override lazy val module = new DotProductF16Module(this)
@@ -48,17 +135,13 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val r_cmd_state  = Reg(UInt(width = 3), init = s_idle)
   val r_recv_state = Reg(UInt(width = 3), init = s_idle)
 
-  val w_ah_bh       = Reg(SInt(width=32))
-  val w_ah_bl_al_bh = Reg(SInt(width=32))
-  val w_al_bl       = Reg(UInt(width=32))
-
   val r_recv_valid  = Reg(init = {Bool(false)})
 
   var logmem_word_len = 1024;
 
-  val result_regfile = Mem(logmem_word_len, UInt(width = 32))
-  val input_regfile  = Mem(logmem_word_len, UInt(width = 32))
-  val weight_regfile = Mem(logmem_word_len, UInt(width = 32))
+  val w_result_MemOutput  = Wire(UInt(width=32))
+  val w_input_MemOutput   = Wire(UInt(width=32))
+  val w_weight_MemOutput  = Wire(UInt(width=32))
 
   val r_result_log_count = Reg(UInt(width=32))
   val r_input_log_count  = Reg(UInt(width=32))
@@ -79,19 +162,19 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   }
 
   when (io.cmd.fire() && getResultMem) {
-    printf("DotProductF16: ResultMem[%d] = %x.\n", io.cmd.bits.rs1, result_regfile(r_log_addr))
+    printf("DotProductF16: ResultMem[%d]\n", io.cmd.bits.rs1)
     r_log_addr   := io.cmd.bits.rs1
     r_recv_state := s_recv_resultLog_finish
   }
 
   when (io.cmd.fire() && getInputMem) {
-    printf("DotProductF16: InputMem[%d] = %x.\n", io.cmd.bits.rs1, input_regfile(r_log_addr))
+    printf("DotProductF16: InputMem[%d].\n", io.cmd.bits.rs1)
     r_log_addr   := io.cmd.bits.rs1
     r_recv_state := s_recv_inputLog_finish
   }
 
   when (io.cmd.fire() && getWeightMem) {
-    printf("DotProductF16: WeightMem[%d] = %x.\n", io.cmd.bits.rs1, weight_regfile(r_log_addr))
+    printf("DotProductF16: WeightMem[%d].\n", io.cmd.bits.rs1)
     r_log_addr   := io.cmd.bits.rs1
     r_recv_state := s_recv_weightLog_finish
   }
@@ -172,66 +255,11 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
     printf("DotProductF16: <<s_mem_recv_v>> w_result update %x\n", w_result)
   }
 
-  val w_a_val = Wire(UInt(width = 32))
-  val w_b_val = Wire(UInt(width = 32))
-  w_a_val := r_a_val
-  w_b_val := io.mem.resp.bits.data;
-
-  val w_a_hi = Wire(SInt(width=32))
-  val w_b_hi = Wire(SInt(width=32))
-  val w_a_lo = Wire(UInt(width=32))
-  val w_b_lo = Wire(UInt(width=32))
-
-  // int32_t  A = (a_val >> 16),    C = (b_val >> 16);
-  // uint32_t B = (a_val & 0xFFFF), D = (b_val & 0xFFFF);
-  w_a_hi := w_a_val(31,16).asSInt()
-  w_b_hi := w_b_val(31,16).asSInt()
-  w_a_lo := Cat(UInt(0, 16), w_a_val(15, 0))
-  w_b_lo := Cat(UInt(0, 16), w_b_val(15, 0))
-
-  // int32_t  AC    = A*C;
-  // int32_t  AD_CB = A*D + C*B;
-  // uint32_t BD    = B*D;
-  w_ah_bh       := w_a_hi * w_b_hi
-  w_ah_bl_al_bh := w_a_hi * w_b_lo + w_a_lo * w_b_hi
-  w_al_bl       := w_a_lo * w_b_lo
-
-  val product_hi = Wire(SInt(width=32))
-  product_hi := w_ah_bh + w_ah_bl_al_bh(31,16).asSInt()
-
-  val product_lo = Wire(UInt(width=32))
-  product_lo := w_al_bl + Cat(w_ah_bl_al_bh, UInt(0,width=16))
-
-  val product_hi2 = Wire(SInt(width=32))
-  when (product_lo < w_al_bl) {
-    product_hi2 := product_hi + SInt(1)
-  } .otherwise {
-    product_hi2 := product_hi
-  }
-
-  val product_hi3 = Wire(SInt(width=32))
-  val product_lo2 = Wire(UInt(width=32))
-  product_lo2 := product_lo - UInt(0x8000) - product_hi(31)
-  when (product_lo2 > product_lo) {
-    product_hi3 := product_hi2 - SInt(1)
-  } .otherwise {
-    product_hi3 := product_hi2
-  }
-
-  w_result := Cat(product_hi3(15, 0), product_lo2(31,16)).asSInt() + SInt(1)
 
   // control
   when (io.mem.req.fire()) {
     busy := Bool(true)
   }
-
-  val result_MemOutput = Wire(UInt(width = 32))
-  val input_MemOutput  = Wire(UInt(width = 32))
-  val weight_MemOutput = Wire(UInt(width = 32))
-
-  result_MemOutput := result_regfile(r_log_addr)
-  input_MemOutput  := input_regfile (r_log_addr)
-  weight_MemOutput := weight_regfile(r_log_addr)
 
   when (io.resp.fire()) {
     when (r_recv_state === s_recv_finish) {
@@ -239,13 +267,13 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
       printf ("DotProductF16: Finished. Answer = %x\n", r_total)
     } .elsewhen (r_recv_state === s_recv_resultLog_finish) {
       r_recv_state := s_idle
-      printf ("DotProductF16: MemResult Finished = %x\n", result_MemOutput)
+      printf ("DotProductF16: MemResult Finished = %x\n", w_result_MemOutput)
     } .elsewhen (r_recv_state === s_recv_inputLog_finish) {
       r_recv_state := s_idle
-      printf ("DotProductF16: InputResult Finished = %x\n", input_MemOutput)
+      printf ("DotProductF16: InputResult Finished = %x\n", w_input_MemOutput)
     } .elsewhen (r_recv_state === s_recv_weightLog_finish) {
       r_recv_state := s_idle
-      printf ("DotProductF16: WeightResult Finished = %x\n", weight_MemOutput)
+      printf ("DotProductF16: WeightResult Finished = %x\n", w_weight_MemOutput)
     }
   }
 
@@ -257,11 +285,11 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   when (r_recv_state === s_recv_finish) {
     io.resp.bits.data := r_total.asUInt()
   } .elsewhen (r_recv_state === s_recv_resultLog_finish) {
-    io.resp.bits.data := result_MemOutput
+    io.resp.bits.data := w_result_MemOutput
   } .elsewhen (r_recv_state === s_recv_inputLog_finish) {
-    io.resp.bits.data := input_MemOutput
+    io.resp.bits.data := w_input_MemOutput
   } .elsewhen (r_recv_state === s_recv_weightLog_finish) {
-    io.resp.bits.data := weight_MemOutput
+    io.resp.bits.data := w_weight_MemOutput
   } .otherwise {
     io.resp.bits.data := UInt(0)
   }
@@ -276,15 +304,31 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   //=================================================
   // Logger
   //=================================================
-  val result_regfile_in = Wire(SInt(width=32))
+
+  val ResultRAM = new LoggerRAM(32, 1024)
+  val InputRAM  = new LoggerRAM(32, 1024)
+  val WeightRAM = new LoggerRAM(32, 1024)
+
+  ResultRAM.io.WData_In := r_total + w_result
+  ResultRAM.io.We_In    := r_recv_valid && r_log_overflow === Bool(false)
+  ResultRAM.io.WAddr_In := r_result_log_count
+  ResultRAM.io.RAddr_In := r_log_addr
+  w_result_MemOutput    := ResultRAM.io.Data_Out
+
+  InputRAM.io.WData_In  := io.mem.resp.bits.data
+  InputRAM.io.We_In     := r_recv_state === s_mem_recv && io.mem.resp.fire() && !r_recv_count(0)
+  InputRAM.io.WAddr_In  := r_input_log_count
+  InputRAM.io.RAddr_In  := r_log_addr
+  w_input_MemOutput     := InputRAM.io.Data_Out
+
+  WeightRAM.io.WData_In := io.mem.resp.bits.data
+  WeightRAM.io.We_In    := r_recv_state === s_mem_recv && io.mem.resp.fire() &&  r_recv_count(0)
+  WeightRAM.io.WAddr_In := r_weight_log_count
+  WeightRAM.io.RAddr_In := r_log_addr
+  w_weight_MemOutput    := WeightRAM.io.Data_Out
+
   val r_log_overflow = Reg(init = {Bool(false)})
-
-  result_regfile_in := r_total + w_result
   when (r_recv_valid && r_log_overflow === Bool(false)) {
-    result_regfile(r_result_log_count) := result_regfile_in.asUInt()
-
-    printf("ResultMem[%x] = %x\n", r_result_log_count, r_result_log_count)
-
     when (r_result_log_count === UInt(logmem_word_len-1)) {
       r_log_overflow := Bool(true)
     } .otherwise {
@@ -292,29 +336,4 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
     }
   }
 
-  // Input Logger
-  when (r_recv_state === s_mem_recv && io.mem.resp.fire() && !r_recv_count(0)) {
-    input_regfile(r_input_log_count) := io.mem.resp.bits.data
-
-    r_input_log_count := r_input_log_count + UInt(1)
-
-    printf("InputMem[%x] = %x\n", r_input_log_count, io.mem.resp.bits.data)
-  }
-
-  // Weight Logger
-  when (r_recv_state === s_mem_recv && io.mem.resp.fire() &&  r_recv_count(0)) {
-    weight_regfile(r_weight_log_count) := io.mem.resp.bits.data
-
-    r_weight_log_count := r_weight_log_count + UInt(1)
-
-    printf("InputMem[%x] = %x\n", r_weight_log_count, io.mem.resp.bits.data)
-  }
-
-  when (io.cmd.fire() && doCalc) {
-    r_result_log_count := UInt(0)
-    r_input_log_count  := UInt(0)
-    r_weight_log_count := UInt(0)
-
-    r_log_overflow   := Bool(false)
-  }
 }
