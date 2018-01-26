@@ -8,6 +8,7 @@ import freechips.rocketchip.config._
 // import freechips.rocketchip.coreplex._
 // import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.rocket._
+import freechips.rocketchip.util._
 // import freechips.rocketchip.tilelink._
 // import freechips.rocketchip.util.InOrderArbiter
 
@@ -290,15 +291,39 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
     io.resp.bits.data := UInt(0)
   }
 
-  // //=================================================
-  // // Reorder Receiver
-  // //=================================================
-  // val a_data_queue = Module (new ReorderQueue(UInt(width=32), n))
-  // val b_data_queue = Module (new ReorderQueue(UInt(width=32), n))
-  //
-  // a_data_queue.io.enq.valid := io.mem.resp.fire() && !io.mem.resp.bits.tag(0)
-  // b_data_queue.io.enq.valid := io.mem.resp.fire() &&  io.mem.resp.bits.tag(0)
+  //=================================================
+  // Reorder Receiver
+  //=================================================
+  val data_tag_counter = Reg(UInt(width=n))
 
+  val a_data_queue = Module (new ReorderQueue(UInt(width=32), 2<<n))
+  val b_data_queue = Module (new ReorderQueue(UInt(width=32), 2<<n))
+
+  a_data_queue.io.enq.valid     := io.mem.resp.fire() && !io.mem.resp.bits.tag(0)
+  a_data_queue.io.enq.bits.data := io.mem.resp.bits.data
+  a_data_queue.io.enq.bits.tag  := io.mem.resp.bits.tag
+
+  a_data_queue.io.deq.tag  := Cat(data_tag_counter, UInt(0, width=1))
+
+  b_data_queue.io.enq.valid     := io.mem.resp.fire() &&  io.mem.resp.bits.tag(0)
+  b_data_queue.io.enq.bits.data := io.mem.resp.bits.data
+  b_data_queue.io.enq.bits.tag  := io.mem.resp.bits.tag
+
+  b_data_queue.io.deq.tag  := Cat(data_tag_counter, UInt(1, width=1))
+
+  when (a_data_queue.io.deq.matches && b_data_queue.io.deq.matches) {
+    a_data_queue.io.deq.valid := Bool(true)
+    b_data_queue.io.deq.valid := Bool(true)
+
+    data_tag_counter := data_tag_counter + UInt(1)
+  } .otherwise {
+    a_data_queue.io.deq.valid := Bool(false)
+    b_data_queue.io.deq.valid := Bool(false)
+  }
+
+  when (io.cmd.fire() && doCalc) {
+    data_tag_counter := UInt(0)
+  }
 
   // Semantics is to always send out prior accumulator register value
   io.busy := Bool(false)
@@ -316,11 +341,11 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   // Fix16_Mul
   //=================================================
   val fix16_mul = Module (new Fix16Mul())
-  fix16_mul.io.A_In  := r_a_val
-  fix16_mul.io.B_In  := io.mem.resp.bits.data
-  fix16_mul.io.En_In := we_weightram
-  w_result        := fix16_mul.io.C_Out
-  w_calc_done     := fix16_mul.io.En_Out
+  fix16_mul.io.A_In  := a_data_queue.io.deq.data
+  fix16_mul.io.B_In  := b_data_queue.io.deq.data
+  fix16_mul.io.En_In := a_data_queue.io.deq.matches && b_data_queue.io.deq.matches
+  w_result           := fix16_mul.io.C_Out
+  w_calc_done        := fix16_mul.io.En_Out
 
   //=================================================
   // Logger
