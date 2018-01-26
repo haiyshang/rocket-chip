@@ -16,8 +16,8 @@ class Fix16Mul extends Module {
     val A_In   = Input(UInt(width = 32))
     val B_In   = Input(UInt(width = 32))
     val En_In  = Input(Bool())
-    val C_out  = Output(UInt(width = 32))
-    val En_out = Output(Bool())
+    val C_Out  = Output(SInt(width = 32))
+    val En_Out = Output(Bool())
   })
 
   val w_a_hi = Wire(SInt(width=32))
@@ -65,11 +65,11 @@ class Fix16Mul extends Module {
     product_hi3 := product_hi2
   }
 
-  io.C_out := Cat(product_hi3(15, 0), product_lo2(31,16)).asSInt() + SInt(1)
+  io.C_Out := Cat(product_hi3(15, 0), product_lo2(31,16)).asSInt() + SInt(1)
 
   val r_en_out = Reg(Bool())
   r_en_out := io.En_In
-  io.En_out := r_en_out
+  io.En_Out := r_en_out
 }
 
 
@@ -89,7 +89,7 @@ class LoggerRAM (DataWidth: Int, Length: Int) extends Module {
     memory(io.WAddr_In) := io.WData_In
   }
 
-  val w_data_out = Wire(UInt(width = DataWidth))
+  val w_data_out = Reg(UInt(width = DataWidth))
   w_data_out := memory(io.RAddr_In)
 
   io.Data_Out := w_data_out
@@ -135,7 +135,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val r_cmd_state  = Reg(UInt(width = 3), init = s_idle)
   val r_recv_state = Reg(UInt(width = 3), init = s_idle)
 
-  val r_recv_valid  = Reg(init = {Bool(false)})
+  val w_calc_done  = Wire(init = {Bool(false)})
 
   var logmem_word_len = 1024;
 
@@ -197,6 +197,11 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
 
     r_cmd_state  := s_mem_fetch
     r_recv_state := s_mem_recv
+
+    r_result_log_count := UInt(0)
+    r_input_log_count  := UInt(0)
+    r_weight_log_count := UInt(0)
+
   }
 
   val w_addr = Mux (r_cmd_count(0) === UInt(0), r_h_addr, r_v_addr)
@@ -240,21 +245,12 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
     r_recv_state := Mux(recv_finished, s_recv_finish, s_mem_recv)
 
     r_a_val      := Mux(r_recv_count(0), r_a_val, io.mem.resp.bits.data)
-
-    when (r_recv_count(0)) {
-      r_recv_valid := UInt(1)
-    } .otherwise {
-      r_recv_valid := UInt(0)
-    }
-  } .otherwise {
-    r_recv_valid := UInt(0)
   }
 
-  when (r_recv_valid) {
+  when (w_calc_done) {
     r_total := r_total + w_result
     printf("DotProductF16: <<s_mem_recv_v>> w_result update %x\n", w_result)
   }
-
 
   // control
   when (io.mem.req.fire()) {
@@ -294,46 +290,78 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
     io.resp.bits.data := UInt(0)
   }
 
+  // //=================================================
+  // // Reorder Receiver
+  // //=================================================
+  // val a_data_queue = Module (new ReorderQueue(UInt(width=32), n))
+  // val b_data_queue = Module (new ReorderQueue(UInt(width=32), n))
+  //
+  // a_data_queue.io.enq.valid := io.mem.resp.fire() && !io.mem.resp.bits.tag(0)
+  // b_data_queue.io.enq.valid := io.mem.resp.fire() &&  io.mem.resp.bits.tag(0)
+
+
   // Semantics is to always send out prior accumulator register value
   io.busy := Bool(false)
   // Be busy when have pending memory requests or committed possibility of pending requests
   io.interrupt := Bool(false)
   // Set this true to trigger an interrupt on the processor (please refer to supervisor documentation)
 
+  val r_log_overflow = Reg(init = {Bool(false)})
+
+  val we_resultram = w_calc_done && (r_log_overflow === Bool(false))
+  val we_inputram  = (r_recv_state === s_mem_recv) && io.mem.resp.fire() && !r_recv_count(0)
+  val we_weightram = (r_recv_state === s_mem_recv) && io.mem.resp.fire() &&  r_recv_count(0)
+
+  //=================================================
+  // Fix16_Mul
+  //=================================================
+  val fix16_mul = Module (new Fix16Mul())
+  fix16_mul.io.A_In  := r_a_val
+  fix16_mul.io.B_In  := io.mem.resp.bits.data
+  fix16_mul.io.En_In := we_weightram
+  w_result        := fix16_mul.io.C_Out
+  w_calc_done     := fix16_mul.io.En_Out
 
   //=================================================
   // Logger
   //=================================================
 
-  val ResultRAM = new LoggerRAM(32, 1024)
-  val InputRAM  = new LoggerRAM(32, 1024)
-  val WeightRAM = new LoggerRAM(32, 1024)
+  val ResultRAM = Module (new LoggerRAM(32, 1024))
+  val InputRAM  = Module (new LoggerRAM(32, 1024))
+  val WeightRAM = Module (new LoggerRAM(32, 1024))
 
-  ResultRAM.io.WData_In := r_total + w_result
-  ResultRAM.io.We_In    := r_recv_valid && r_log_overflow === Bool(false)
+  ResultRAM.io.WData_In := (r_total + w_result).asUInt()
+  ResultRAM.io.We_In    := we_resultram
   ResultRAM.io.WAddr_In := r_result_log_count
   ResultRAM.io.RAddr_In := r_log_addr
   w_result_MemOutput    := ResultRAM.io.Data_Out
 
   InputRAM.io.WData_In  := io.mem.resp.bits.data
-  InputRAM.io.We_In     := r_recv_state === s_mem_recv && io.mem.resp.fire() && !r_recv_count(0)
+  InputRAM.io.We_In     := we_inputram
   InputRAM.io.WAddr_In  := r_input_log_count
   InputRAM.io.RAddr_In  := r_log_addr
   w_input_MemOutput     := InputRAM.io.Data_Out
 
   WeightRAM.io.WData_In := io.mem.resp.bits.data
-  WeightRAM.io.We_In    := r_recv_state === s_mem_recv && io.mem.resp.fire() &&  r_recv_count(0)
+  WeightRAM.io.We_In    := we_weightram
   WeightRAM.io.WAddr_In := r_weight_log_count
   WeightRAM.io.RAddr_In := r_log_addr
   w_weight_MemOutput    := WeightRAM.io.Data_Out
 
-  val r_log_overflow = Reg(init = {Bool(false)})
-  when (r_recv_valid && r_log_overflow === Bool(false)) {
+  when (w_calc_done && r_log_overflow === Bool(false)) {
     when (r_result_log_count === UInt(logmem_word_len-1)) {
       r_log_overflow := Bool(true)
-    } .otherwise {
-      r_result_log_count := r_result_log_count + UInt(1)
     }
+  }
+
+  when (we_resultram) {
+    r_result_log_count := r_result_log_count + UInt(1)
+  }
+  when (we_inputram) {
+    r_input_log_count := r_input_log_count + UInt(1)
+  }
+  when (we_weightram) {
+    r_weight_log_count := r_weight_log_count + UInt(1)
   }
 
 }
