@@ -361,14 +361,14 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   ResultRAM.io.RAddr_In := r_log_addr
   w_result_MemOutput    := ResultRAM.io.Data_Out
 
-  InputRAM.io.WData_In  := io.mem.resp.bits.data
-  InputRAM.io.We_In     := we_inputram
+  InputRAM.io.WData_In  := a_data_queue.io.deq.data
+  InputRAM.io.We_In     := a_data_queue.io.deq.valid && !r_log_overflow
   InputRAM.io.WAddr_In  := r_input_log_count
   InputRAM.io.RAddr_In  := r_log_addr
   w_input_MemOutput     := InputRAM.io.Data_Out
 
-  WeightRAM.io.WData_In := io.mem.resp.bits.data
-  WeightRAM.io.We_In    := we_weightram
+  WeightRAM.io.WData_In := b_data_queue.io.deq.data
+  WeightRAM.io.We_In    := b_data_queue.io.deq.valid && !r_log_overflow
   WeightRAM.io.WAddr_In := r_weight_log_count
   WeightRAM.io.RAddr_In := r_log_addr
   w_weight_MemOutput    := WeightRAM.io.Data_Out
