@@ -95,7 +95,7 @@ class LoggerRAM (DataWidth: Int, Length: Int) extends Module {
 }
 
 
-class DotProductF16(n: Int = 4)(implicit p: Parameters) extends RoCC()(p) 
+class DotProductF16(n: Int = 4)(implicit p: Parameters) extends RoCC()(p)
 {
   val busy = Reg(init = {Bool(false)})
 
@@ -120,7 +120,6 @@ class DotProductF16(n: Int = 4)(implicit p: Parameters) extends RoCC()(p)
 
   // datapath
   val r_total = Reg(SInt(width = xLen))
-  val r_a_val = Reg(UInt(width = xLen))
   val r_tag   = Reg(UInt(width = n))
 
   val w_result = Wire(SInt(width=32))
@@ -132,7 +131,7 @@ class DotProductF16(n: Int = 4)(implicit p: Parameters) extends RoCC()(p)
 
   val w_calc_done  = Wire(init = {Bool(false)})
 
-  var logmem_word_len = 1024;
+  var logmem_word_len = 1024
 
   val w_result_MemOutput  = Wire(UInt(width=32))
   val w_input_MemOutput   = Wire(UInt(width=32))
@@ -141,8 +140,6 @@ class DotProductF16(n: Int = 4)(implicit p: Parameters) extends RoCC()(p)
   val r_result_log_count = Reg(UInt(width=32))
   val r_input_log_count  = Reg(UInt(width=32))
   val r_weight_log_count = Reg(UInt(width=32))
-
-  val r_log_addr = Reg(UInt(width=32))
 
   when (io.cmd.fire() && setM) {
     printf("DotProductF16: SetLengthM Request. %x\n", io.cmd.bits.rs1)
@@ -158,19 +155,16 @@ class DotProductF16(n: Int = 4)(implicit p: Parameters) extends RoCC()(p)
 
   when (io.cmd.fire() && getResultMem) {
     printf("DotProductF16: ResultMem[%d]\n", io.cmd.bits.rs1)
-    r_log_addr   := io.cmd.bits.rs1
     r_recv_state := s_recv_resultLog_finish
   }
 
   when (io.cmd.fire() && getInputMem) {
     printf("DotProductF16: InputMem[%d].\n", io.cmd.bits.rs1)
-    r_log_addr   := io.cmd.bits.rs1
     r_recv_state := s_recv_inputLog_finish
   }
 
   when (io.cmd.fire() && getWeightMem) {
     printf("DotProductF16: WeightMem[%d].\n", io.cmd.bits.rs1)
-    r_log_addr   := io.cmd.bits.rs1
     r_recv_state := s_recv_weightLog_finish
   }
 
@@ -238,8 +232,6 @@ class DotProductF16(n: Int = 4)(implicit p: Parameters) extends RoCC()(p)
 
     r_recv_count := Mux(recv_finished, UInt(0), r_recv_count + UInt(1))
     r_recv_state := Mux(recv_finished, s_recv_finish, s_mem_recv)
-
-    r_a_val      := Mux(r_recv_count(0), r_a_val, io.mem.resp.bits.data)
   }
 
   when (w_calc_done) {
@@ -290,8 +282,8 @@ class DotProductF16(n: Int = 4)(implicit p: Parameters) extends RoCC()(p)
   //=================================================
   val data_tag_counter = Reg(UInt(width=n))
 
-  val a_data_queue = Module (new ReorderQueue(UInt(width=32), 2<<n))
-  val b_data_queue = Module (new ReorderQueue(UInt(width=32), 2<<n))
+  val a_data_queue = Module (new ReorderQueue(UInt(width=32), n-1))
+  val b_data_queue = Module (new ReorderQueue(UInt(width=32), n-1))
 
   a_data_queue.io.enq.valid     := io.mem.resp.fire() && !io.mem.resp.bits.tag(0)
   a_data_queue.io.enq.bits.data := io.mem.resp.bits.data
@@ -327,10 +319,6 @@ class DotProductF16(n: Int = 4)(implicit p: Parameters) extends RoCC()(p)
 
   val r_log_overflow = Reg(init = {Bool(false)})
 
-  val we_resultram = w_calc_done && (r_log_overflow === Bool(false))
-  val we_inputram  = (r_recv_state === s_mem_recv) && io.mem.resp.fire() && !r_recv_count(0)
-  val we_weightram = (r_recv_state === s_mem_recv) && io.mem.resp.fire() &&  r_recv_count(0)
-
   //=================================================
   // Fix16_Mul
   //=================================================
@@ -350,21 +338,21 @@ class DotProductF16(n: Int = 4)(implicit p: Parameters) extends RoCC()(p)
   val WeightRAM = Module (new LoggerRAM(32, 1024))
 
   ResultRAM.io.WData_In := (r_total + w_result).asUInt()
-  ResultRAM.io.We_In    := we_resultram
+  ResultRAM.io.We_In    := w_calc_done && !r_log_overflow
   ResultRAM.io.WAddr_In := r_result_log_count
-  ResultRAM.io.RAddr_In := r_log_addr
+  ResultRAM.io.RAddr_In := io.cmd.bits.rs1
   w_result_MemOutput    := ResultRAM.io.Data_Out
 
   InputRAM.io.WData_In  := a_data_queue.io.deq.data
   InputRAM.io.We_In     := a_data_queue.io.deq.valid && !r_log_overflow
   InputRAM.io.WAddr_In  := r_input_log_count
-  InputRAM.io.RAddr_In  := r_log_addr
+  InputRAM.io.RAddr_In  := io.cmd.bits.rs1
   w_input_MemOutput     := InputRAM.io.Data_Out
 
   WeightRAM.io.WData_In := b_data_queue.io.deq.data
   WeightRAM.io.We_In    := b_data_queue.io.deq.valid && !r_log_overflow
   WeightRAM.io.WAddr_In := r_weight_log_count
-  WeightRAM.io.RAddr_In := r_log_addr
+  WeightRAM.io.RAddr_In := io.cmd.bits.rs1
   w_weight_MemOutput    := WeightRAM.io.Data_Out
 
   when (w_calc_done && r_log_overflow === Bool(false)) {
@@ -373,13 +361,13 @@ class DotProductF16(n: Int = 4)(implicit p: Parameters) extends RoCC()(p)
     }
   }
 
-  when (we_resultram) {
+  when (ResultRAM.io.We_In) {
     r_result_log_count := r_result_log_count + UInt(1)
   }
-  when (we_inputram) {
+  when (InputRAM.io.We_In) {
     r_input_log_count := r_input_log_count + UInt(1)
   }
-  when (we_weightram) {
+  when (WeightRAM.io.We_In) {
     r_weight_log_count := r_weight_log_count + UInt(1)
   }
 
