@@ -138,6 +138,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val w_calc_done  = Wire(init = {Bool(false)})
 
   var logmem_word_len = 1024
+  var h_v_bit = 1 // 2-request step
 
   val w_result_MemOutput  = Wire(UInt(width=32))
   val w_input_MemOutput   = Wire(UInt(width=32))
@@ -199,7 +200,7 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
 
   }
 
-  val w_addr = Mux (r_cmd_count(0) === UInt(0), r_h_addr, r_v_addr)
+  val w_addr = Mux (r_cmd_count(h_v_bit) === UInt(0), r_h_addr, r_v_addr)
 
   io.cmd.ready := (r_cmd_state === s_idle) && (r_recv_state === s_idle)
   // command resolved if no stalls AND not issuing a load that will need a request
@@ -210,10 +211,13 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   when ((r_cmd_state === s_mem_fetch) && io.mem.req.fire()) {
     printf("DotProductF16: <<s_mem_fetch_v>> IO.MEM Command Fire %x\n", w_addr)
 
-    r_cmd_count  := Mux(cmd_finished, UInt(0), r_cmd_count + UInt(1))
+    r_cmd_count  := r_cmd_count + UInt(1)
 
-    r_h_addr     := Mux(r_cmd_count(0), r_h_addr, r_h_addr + UInt(4))
-    r_v_addr     := Mux(r_cmd_count(0), r_v_addr + (r_v_step << UInt(2)), r_v_addr)
+    when (!r_cmd_count(h_v_bit)) {
+      r_h_addr     := r_h_addr + UInt(4)
+    } .otherwise {
+      r_v_addr     := r_v_addr + (r_v_step << UInt(2))
+    }
 
     r_cmd_state  := Mux(cmd_finished, s_idle, s_mem_fetch)
   }
@@ -236,8 +240,8 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   when (r_recv_state === s_mem_recv && io.mem.resp.fire()) {
     printf("DotProductF16: <<s_mem_recv_v>> IO.MEM Received %x (r_count=%d)\n", io.mem.resp.bits.data, r_recv_count)
 
-    r_recv_count := Mux(recv_finished, UInt(0), r_recv_count + UInt(1))
-    r_recv_state := Mux(recv_finished, s_recv_finish, s_mem_recv)
+    r_recv_count := r_recv_count + UInt(1)
+    r_recv_state := s_recv_finish
   }
 
   when (w_calc_done) {
@@ -291,17 +295,17 @@ class DotProductF16Module(outer: DotProductF16, n: Int = 4)(implicit p: Paramete
   val a_data_queue = Module (new ReorderQueue(UInt(width=32), n-1))
   val b_data_queue = Module (new ReorderQueue(UInt(width=32), n-1))
 
-  a_data_queue.io.enq.valid     := io.mem.resp.fire() && !io.mem.resp.bits.tag(0)
+  a_data_queue.io.enq.valid     := io.mem.resp.fire() && !io.mem.resp.bits.tag(h_v_bit)
   a_data_queue.io.enq.bits.data := io.mem.resp.bits.data
   a_data_queue.io.enq.bits.tag  := io.mem.resp.bits.tag
 
-  a_data_queue.io.deq.tag  := Cat(data_tag_counter, UInt(0, width=1))
+  a_data_queue.io.deq.tag  := Cat(data_tag_counter(n-2, h_v_bit), UInt(0, width=1), data_tag_counter(h_v_bit-1, 0))
 
-  b_data_queue.io.enq.valid     := io.mem.resp.fire() &&  io.mem.resp.bits.tag(0)
+  b_data_queue.io.enq.valid     := io.mem.resp.fire() &&  io.mem.resp.bits.tag(h_v_bit)
   b_data_queue.io.enq.bits.data := io.mem.resp.bits.data
   b_data_queue.io.enq.bits.tag  := io.mem.resp.bits.tag
 
-  b_data_queue.io.deq.tag  := Cat(data_tag_counter, UInt(1, width=1))
+  b_data_queue.io.deq.tag  := Cat(data_tag_counter(n-2, h_v_bit), UInt(1, width=1), data_tag_counter(h_v_bit-1, 0))
 
   when (a_data_queue.io.deq.matches && b_data_queue.io.deq.matches) {
     a_data_queue.io.deq.valid := Bool(true)
