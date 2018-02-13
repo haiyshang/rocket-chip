@@ -32,6 +32,8 @@ class TLSimpleRAM(c: SimpleRAMParams)(implicit p: Parameters) extends LazyModule
       regionType         = RegionType.UNCACHED,
       executable         = true,
       supportsGet        = TransferSizes(1, beatBytes),
+      supportsPutPartial = TransferSizes(1, beatBytes),
+      supportsPutFull    = TransferSizes(1, beatBytes),
       fifoId             = Some(0))), // requests are handled in order
     beatBytes = beatBytes)))
 
@@ -71,4 +73,3 @@ class TLSimpleRAM(c: SimpleRAMParams)(implicit p: Parameters) extends LazyModule
     in.e.ready := Bool(true)
   }
 }
-
