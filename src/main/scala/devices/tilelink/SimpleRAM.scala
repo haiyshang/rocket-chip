@@ -30,7 +30,7 @@ class TLSimpleRAM(c: SimpleRAMParams)(implicit p: Parameters) extends LazyModule
       address            = AddressSet.misaligned(c.address, c.depth*beatBytes),
       resources          = new SimpleDevice("ram", Seq("msyksphinz,simpleRAM")).reg("mem"),
       regionType         = RegionType.UNCACHEABLE,
-      // executable         = true,
+      executable         = true,
       supportsGet        = TransferSizes(1, beatBytes),
       supportsPutPartial = TransferSizes(1, beatBytes),
       supportsPutFull    = TransferSizes(1, beatBytes),
@@ -48,7 +48,7 @@ class TLSimpleRAM(c: SimpleRAMParams)(implicit p: Parameters) extends LazyModule
     val d_read = Reg(Bool())
     val d_size = Reg(UInt())
     val d_source = Reg(UInt())
-    val d_data = memory(mem_address) holdUnless RegNext(in.a.fire())
+    val d_data = Reg(UInt(width=c.width))
     val d_legal = Reg(Bool())
 
     // Flow control
@@ -57,7 +57,9 @@ class TLSimpleRAM(c: SimpleRAMParams)(implicit p: Parameters) extends LazyModule
     in.d.valid := d_full
     in.a.ready := in.d.ready || !d_full
 
-    in.d.bits := edge.AccessAck(d_source, d_size, !d_legal)
+    d_data := memory(mem_address) holdUnless RegNext(in.a.fire())
+
+    in.d.bits := edge.AccessAck(d_source, d_size, d_legal)
     // avoid data-bus Mux
     in.d.bits.data := d_data
     in.d.bits.opcode := Mux(d_read, TLMessages.AccessAckData, TLMessages.AccessAck)
