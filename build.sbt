@@ -58,9 +58,12 @@ lazy val commonSettings = Seq(
 lazy val chisel = (project in file("chisel3")).settings(commonSettings)
 
 def dependOnChisel(prj: Project) = {
+
   if (sys.props.contains("ROCKET_USE_MAVEN")) {
     prj.settings(
-      libraryDependencies ++= Seq("edu.berkeley.cs" %% "chisel3" % "3.2-SNAPSHOT")
+      libraryDependencies ++= Seq("edu.berkeley.cs" %% "chisel3" % "3.2-SNAPSHOT") ++
+        Seq("edu.berkeley.cs" %% "chisel-iotesters" % "1.1.+") ++
+        Seq("edu.berkeley.cs" %% "dsptools" % "1.1.+")
     )
   } else {
     prj.dependsOn(chisel)
@@ -112,4 +115,3 @@ lazy val chipSettings = Seq(
     s"make -C $makeDir  -j $jobs $target".!
   }
 )
-
