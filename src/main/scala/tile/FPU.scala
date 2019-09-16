@@ -6,7 +6,9 @@ package freechips.rocketchip.tile
 import Chisel._
 import Chisel.ImplicitConversions._
 
-import freechips.rocketchip.config.Parameters
+import freechips.rocketchip.system._
+
+import freechips.rocketchip.config.{Parameters, Config}
 import freechips.rocketchip.rocket._
 import freechips.rocketchip.rocket.Instructions._
 import freechips.rocketchip.util._
@@ -17,7 +19,7 @@ import chisel3.experimental._
 case class FPUParams(
   fLen: Int = 64,
   divSqrt: Boolean = true,
-  sfmaLatency: Int = 3,
+  sfmaLatency: Int = 4,
   dfmaLatency: Int = 4
 )
 
@@ -133,7 +135,7 @@ class FPUDecoder(implicit p: Parameters) extends FPUModule()(p) {
   sigs zip decoder map {case(s,d) => s := d}
 }
 
-class FPUCoreIO(implicit p: Parameters) extends CoreBundle()(p) {
+class FPUCoreIO(implicit p: Parameters) extends FPUCoreBundle()(p) {
   val inst = Bits(INPUT, 32)
   val fromint_data = Bits(INPUT, xLen)
 
@@ -167,18 +169,18 @@ class FPUIO(implicit p: Parameters) extends FPUCoreIO ()(p) {
   val cp_resp = Decoupled(new FPResult())
 }
 
-class FPResult(implicit p: Parameters) extends CoreBundle()(p) {
+class FPResult(implicit p: Parameters) extends FPUCoreBundle()(p) {
   val data = Bits(width = fLen+1)
   val exc = Bits(width = FPConstants.FLAGS_SZ)
 }
 
-class IntToFPInput(implicit p: Parameters) extends CoreBundle()(p) with HasFPUCtrlSigs {
+class IntToFPInput(implicit p: Parameters) extends FPUCoreBundle()(p) with HasFPUCtrlSigs {
   val rm = Bits(width = FPConstants.RM_SZ)
   val typ = Bits(width = 2)
   val in1 = Bits(width = xLen)
 }
 
-class FPInput(implicit p: Parameters) extends CoreBundle()(p) with HasFPUCtrlSigs {
+class FPInput(implicit p: Parameters) extends FPUCoreBundle()(p) with HasFPUCtrlSigs {
   val rm = Bits(width = FPConstants.RM_SZ)
   val fmaCmd = Bits(width = 2)
   val typ = Bits(width = 2)
@@ -389,7 +391,7 @@ trait HasFPUParameters {
   }
 }
 
-abstract class FPUModule(implicit p: Parameters) extends CoreModule()(p) with HasFPUParameters
+abstract class FPUModule(implicit p: Parameters) extends FPUCoreModule()(p) with HasFPUParameters
 
 class FPToInt(implicit p: Parameters) extends FPUModule()(p) with ShouldBeRetimed {
   class Output extends Bundle {
@@ -573,7 +575,7 @@ class FPToFP(val latency: Int)(implicit p: Parameters) extends FPUModule()(p) wi
 
 class MulAddRecFNPipe(latency: Int, expWidth: Int, sigWidth: Int) extends Module
 {
-    require(latency<=2) 
+    require(latency<=2)
 
     val io = new Bundle {
         val validin = Bool(INPUT)
@@ -608,7 +610,7 @@ class MulAddRecFNPipe(latency: Int, expWidth: Int, sigWidth: Int) extends Module
     val valid_stage0 = Wire(Bool())
     val roundingMode_stage0 = Wire(UInt(width=3))
     val detectTininess_stage0 = Wire(UInt(width=1))
-  
+
     val postmul_regs = if(latency>0) 1 else 0
     mulAddRecFNToRaw_postMul.io.fromPreMul   := Pipe(io.validin, mulAddRecFNToRaw_preMul.io.toPostMul, postmul_regs).bits
     mulAddRecFNToRaw_postMul.io.mulAddResult := Pipe(io.validin, mulAddResult, postmul_regs).bits
@@ -616,7 +618,7 @@ class MulAddRecFNPipe(latency: Int, expWidth: Int, sigWidth: Int) extends Module
     roundingMode_stage0                      := Pipe(io.validin, io.roundingMode, postmul_regs).bits
     detectTininess_stage0                    := Pipe(io.validin, io.detectTininess, postmul_regs).bits
     valid_stage0                             := Pipe(io.validin, false.B, postmul_regs).valid
-    
+
     //------------------------------------------------------------------------
     //------------------------------------------------------------------------
     val roundRawFNToRecFN = Module(new hardfloat.RoundRawFNToRecFN(expWidth, sigWidth, 0))
@@ -675,10 +677,13 @@ class FPUFMAPipe(val latency: Int, val t: FType)
 class FPU(cfg: FPUParams)(implicit p: Parameters) extends FPUModule()(p) {
   val io = new FPUIO
 
-  val useClockGating = coreParams match {
-    case r: RocketCoreParams => r.clockGate
-    case _ => false
-  }
+  // val useClockGating = coreParams match {
+  //   case r: RocketCoreParams => r.clockGate
+  //   case _ => false
+  // }
+  val useClockGating = false
+  val enableCommitLog = true
+
   val clock_en_reg = Reg(Bool())
   val clock_en = clock_en_reg || io.cp_req.valid
   val gated_clock =
@@ -803,7 +808,7 @@ class FPU(cfg: FPUParams)(implicit p: Parameters) extends FPUModule()(p) {
 
   // writeback arbitration
   case class Pipe(p: Module, lat: Int, cond: (FPUCtrlSigs) => Bool, res: FPResult)
-  val pipes = List(
+    val pipes = List(
     Pipe(fpmu, fpmu.latency, (c: FPUCtrlSigs) => c.fastpipe, fpmu.io.out.bits),
     Pipe(ifpu, ifpu.latency, (c: FPUCtrlSigs) => c.fromint, ifpu.io.out.bits),
     Pipe(sfma, sfma.latency, (c: FPUCtrlSigs) => c.fma && c.singleOut, sfma.io.out.bits)) ++
@@ -939,4 +944,11 @@ class FPU(cfg: FPUParams)(implicit p: Parameters) extends FPUModule()(p) {
 
   def ccover(cond: Bool, label: String, desc: String)(implicit sourceInfo: SourceInfo) =
     cover(cond, s"FPU_$label", "Core;;" + desc)
+}
+
+
+object main extends App
+{
+  val config = new DefaultConfig
+  chisel3.Driver.emitVerilog(new FPU(new FPUParams)(config))
 }

@@ -106,8 +106,22 @@ trait HasCoreParameters extends HasTileParameters {
 abstract class CoreModule(implicit val p: Parameters) extends Module
   with HasCoreParameters
 
+
+trait HasFPUCoreParameters extends HasTileParameters {
+  val fLen: Int = 64
+  override val xLen: Int = 32
+}
+
+abstract class FPUCoreModule(implicit val p: Parameters) extends Module
+    with HasFPUCoreParameters
+
+
 abstract class CoreBundle(implicit val p: Parameters) extends ParameterizedBundle()(p)
   with HasCoreParameters
+
+abstract class FPUCoreBundle(implicit val p: Parameters) extends ParameterizedBundle()(p)
+  with HasFPUCoreParameters
+
 
 class CoreInterrupts(implicit p: Parameters) extends TileInterrupts()(p) {
   val buserror = tileParams.beuAddr.map(a => Bool())
