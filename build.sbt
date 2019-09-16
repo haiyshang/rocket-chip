@@ -7,6 +7,12 @@ import sys.process._
 
 enablePlugins(PackPlugin)
 
+val defaultVersions = Map(
+  "chisel3" -> "3.1.8",
+  "chisel-iotesters" -> "1.1.+",
+  "dsptools" -> "1.1.+"
+)
+
 lazy val commonSettings = Seq(
   organization := "edu.berkeley.cs",
   version      := "1.2-SNAPSHOT",
@@ -17,6 +23,9 @@ lazy val commonSettings = Seq(
   scalacOptions ++= Seq("-deprecation","-unchecked","-Xsource:2.11"),
   libraryDependencies ++= Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value),
   libraryDependencies ++= Seq("org.json4s" %% "json4s-jackson" % "3.6.1"),
+  libraryDependencies ++= Seq("edu.berkeley.cs" %% "chisel-iotesters" % "1.1.+"),
+  libraryDependencies ++= Seq("edu.berkeley.cs" %% "dsptools" % "1.1.+"),
+
   addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.full),
   resolvers ++= Seq(
     Resolver.sonatypeRepo("snapshots"),
