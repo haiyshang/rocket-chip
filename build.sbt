@@ -7,11 +7,7 @@ import sys.process._
 
 enablePlugins(PackPlugin)
 
-val defaultVersions = Map(
-  "chisel3" -> "3.1.8",
-  "chisel-iotesters" -> "1.1.+",
-  "dsptools" -> "1.1.+"
-)
+addSbtPlugin("org.xerial.sbt" % "sbt-pack" % "0.9.3")
 
 lazy val commonSettings = Seq(
   organization := "edu.berkeley.cs",
